@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ИС УТО — Маршрутизация спецтехники</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 380px;
+      min-width: 320px;
+      background: #16213e;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #0f3460;
+      overflow-y: auto;
+    }
+
+    #sidebar h1 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #e94560;
+      padding: 16px 16px 8px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    #sidebar h2 {
+      font-size: 11px;
+      color: #8892b0;
+      padding: 12px 16px 6px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .form-group {
+      padding: 4px 16px;
+    }
+
+    label {
+      display: block;
+      font-size: 11px;
+      color: #8892b0;
+      margin-bottom: 4px;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      background: #0f3460;
+      border: 1px solid #1a4a80;
+      border-radius: 4px;
+      color: #ccd6f6;
+      padding: 7px 10px;
+      font-size: 13px;
+      outline: none;
+    }
+    input:focus, select:focus { border-color: #e94560; }
+
+    .btn {
+      margin: 10px 16px 6px;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      width: calc(100% - 32px);
+      transition: background 0.2s;
+    }
+    .btn-primary { background: #e94560; color: #fff; }
+    .btn-primary:hover { background: #c73652; }
+    .btn-secondary { background: #0f3460; color: #ccd6f6; border: 1px solid #1a4a80; }
+    .btn-secondary:hover { background: #1a4a80; }
+
+    .status {
+      margin: 0 16px 8px;
+      padding: 8px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      display: none;
+    }
+    .status.info  { background: #0f3460; color: #64ffda; border: 1px solid #0a4a6e; }
+    .status.error { background: #3d0c1e; color: #ff6b6b; border: 1px solid #6e1030; }
+    .status.ok    { background: #0a3d2e; color: #64ffda; border: 1px solid #0e5c45; }
+
+    /* ── Results panel ── */
+    #results { padding: 0 16px 16px; }
+
+    .unit-card {
+      background: #0f3460;
+      border: 1px solid #1a4a80;
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .unit-card:hover, .unit-card.active { border-color: #e94560; }
+
+    .unit-name { font-size: 13px; font-weight: 600; color: #ccd6f6; }
+    .unit-meta {
+      display: flex;
+      gap: 10px;
+      margin-top: 4px;
+      font-size: 11px;
+      color: #8892b0;
+    }
+    .unit-meta span { white-space: nowrap; }
+    .badge {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      margin-left: 4px;
+    }
+    .badge-score { background: #e94560; color: #fff; }
+
+    .unit-reason {
+      font-size: 11px;
+      color: #64ffda;
+      margin-top: 5px;
+      font-style: italic;
+    }
+
+    /* Baseline comparison */
+    #baseline-card {
+      margin: 0 16px 10px;
+      padding: 8px 12px;
+      background: #1a1a2e;
+      border: 1px dashed #1a4a80;
+      border-radius: 6px;
+      font-size: 11px;
+      display: none;
+    }
+    #baseline-card .baseline-label {
+      color: #8892b0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    #baseline-card .baseline-body {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    #baseline-card .baseline-name { color: #ccd6f6; font-weight: 600; }
+    #baseline-card .baseline-meta { color: #8892b0; }
+    .saving-badge {
+      background: #0a3d2e;
+      color: #64ffda;
+      border: 1px solid #0e5c45;
+      border-radius: 10px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    /* Route info strip */
+    #route-info {
+      margin: 0 16px 10px;
+      padding: 8px 12px;
+      background: #0a3d2e;
+      border: 1px solid #0e5c45;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #64ffda;
+      display: none;
+    }
+
+    /* Savings panel for multitask */
+    #savings-panel {
+      margin: 0 16px 10px;
+      padding: 8px 12px;
+      background: #0a2040;
+      border: 1px solid #1a4a80;
+      border-radius: 6px;
+      font-size: 12px;
+      display: none;
+    }
+    #savings-panel .saving-pct { font-size: 22px; font-weight: 700; color: #64ffda; }
+    #savings-panel p { color: #8892b0; margin-top: 4px; }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #0f3460;
+      padding: 0 16px;
+    }
+    .tab {
+      padding: 8px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      color: #8892b0;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s;
+    }
+    .tab.active { color: #e94560; border-bottom-color: #e94560; }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── Map ── */
+    #map { flex: 1; }
+
+    /* Loading spinner */
+    .loading::after {
+      content: ' ⟳';
+      animation: spin 1s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════ SIDEBAR ═══════════════════════════════ -->
+<div id="sidebar">
+  <h1>ИС УТО · Маршрутизация спецтехники</h1>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('rec')">Рекомендации</div>
+    <div class="tab" onclick="switchTab('route')">Маршрут</div>
+    <div class="tab" onclick="switchTab('multi')">Мульти-стоп</div>
+  </div>
+
+  <!-- ── Tab: Recommendations ── -->
+  <div id="tab-rec" class="tab-content active">
+    <h2>Параметры заявки</h2>
+    <div class="form-group">
+      <label>ID заявки</label>
+      <input id="rec-task-id" value="T-2025-0042" placeholder="T-2025-0042"/>
+    </div>
+    <div class="form-group">
+      <label>Приоритет</label>
+      <select id="rec-priority">
+        <option value="high">high — срочная</option>
+        <option value="medium" selected>medium — плановая</option>
+        <option value="low">low — отложенная</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>UWI скважины</label>
+      <input id="rec-uwi" value="05-1234-567" placeholder="05-1234-567"/>
+    </div>
+    <div class="form-group">
+      <label>Плановое начало</label>
+      <input id="rec-start" type="datetime-local" value="2025-02-20T08:00"/>
+    </div>
+    <div class="form-group">
+      <label>Длительность (ч)</label>
+      <input id="rec-duration" type="number" value="4.5" min="0.5" step="0.5"/>
+    </div>
+    <div class="form-group">
+      <label>Тип работ (опционально)</label>
+      <input id="rec-task-type" placeholder="цементирование, промывка …"/>
+    </div>
+    <button class="btn btn-primary" onclick="getRecommendations()">Подобрать технику</button>
+    <div id="status-rec" class="status"></div>
+    <div id="baseline-card">
+      <div class="baseline-label">Baseline (ближайшая свободная)</div>
+      <div class="baseline-body">
+        <span class="baseline-name" id="baseline-name">—</span>
+        <span class="baseline-meta" id="baseline-meta">—</span>
+        <span class="saving-badge" id="baseline-saving" style="display:none"></span>
+      </div>
+    </div>
+    <div id="results-rec" id="results"></div>
+  </div>
+
+  <!-- ── Tab: Route ── -->
+  <div id="tab-route" class="tab-content">
+    <h2>Точка отправления (техника)</h2>
+    <div class="form-group">
+      <label>Долгота (lon)</label>
+      <input id="route-from-lon" value="68.12345" placeholder="68.12345"/>
+    </div>
+    <div class="form-group">
+      <label>Широта (lat)</label>
+      <input id="route-from-lat" value="51.67890" placeholder="51.67890"/>
+    </div>
+    <h2>Точка назначения (скважина)</h2>
+    <div class="form-group">
+      <label>Долгота (lon)</label>
+      <input id="route-to-lon" value="68.09100" placeholder="68.09100"/>
+    </div>
+    <div class="form-group">
+      <label>Широта (lat)</label>
+      <input id="route-to-lat" value="51.70450" placeholder="51.70450"/>
+    </div>
+    <button class="btn btn-primary" onclick="buildRoute()">Построить маршрут</button>
+    <div id="status-route" class="status"></div>
+    <div id="route-info">
+      <span id="route-dist">—</span> км &nbsp;·&nbsp; <span id="route-time">—</span> мин
+    </div>
+  </div>
+
+  <!-- ── Tab: Multi-stop ── -->
+  <div id="tab-multi" class="tab-content">
+    <h2>Список заявок (через запятую)</h2>
+    <div class="form-group">
+      <textarea id="multi-ids" rows="3" placeholder="T-2025-0042, T-2025-0043, T-2025-0044"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Макс. время выезда (мин)</label>
+      <input id="multi-max-time" type="number" value="480"/>
+    </div>
+    <div class="form-group">
+      <label>Макс. коэф. крюка</label>
+      <input id="multi-detour" type="number" value="1.3" step="0.05"/>
+    </div>
+    <button class="btn btn-primary" onclick="evalMultitask()">Оценить группировку</button>
+    <div id="status-multi" class="status"></div>
+    <div id="savings-panel">
+      <div class="saving-pct" id="savings-pct">—</div>
+      <p id="savings-desc"></p>
+      <p id="savings-reason"></p>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════ MAP ═══════════════════════════════ -->
+<div id="map"></div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ─── Config ────────────────────────────────────────────────────────────────
+// In production (Railway) the frontend is served by the same FastAPI server —
+// use relative URLs. When opening as a local file or on a different port, fall
+// back to localhost:8000.
+const API_BASE = (window.location.protocol === 'file:' || window.location.port === '5500')
+  ? 'http://localhost:8000'
+  : '';
+
+// Last resolved well coords (set by getRecommendations, used by showRoute)
+let _wellLon = 0, _wellLat = 0;
+
+// ─── Map setup ─────────────────────────────────────────────────────────────
+const map = L.map('map').setView([51.67, 68.12], 12);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors',
+  maxZoom: 18,
+}).addTo(map);
+
+// Layer groups
+const routeLayer   = L.layerGroup().addTo(map);
+const markerLayer  = L.layerGroup().addTo(map);
+const multiLayer   = L.layerGroup().addTo(map);
+
+// Icons
+const iconVehicle = L.divIcon({
+  html: '<div style="background:#e94560;width:14px;height:14px;border-radius:50%;border:2px solid #fff;"></div>',
+  iconSize: [14,14], iconAnchor: [7,7], className: ''
+});
+const iconWell = L.divIcon({
+  html: '<div style="background:#64ffda;width:14px;height:14px;transform:rotate(45deg);border:2px solid #fff;"></div>',
+  iconSize: [14,14], iconAnchor: [7,7], className: ''
+});
+const iconWellSmall = L.divIcon({
+  html: '<div style="background:#ffd700;width:10px;height:10px;transform:rotate(45deg);border:2px solid #fff;"></div>',
+  iconSize: [10,10], iconAnchor: [5,5], className: ''
+});
+
+// ─── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    const tabs = ['rec','route','multi'];
+    t.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+// ─── Status helpers ─────────────────────────────────────────────────────────
+function setStatus(id, msg, type='info') {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status ' + type;
+  el.style.display = msg ? 'block' : 'none';
+  if (type === 'info') el.classList.add('loading');
+}
+function clearStatus(id) { setStatus(id, '', ''); }
+
+// ─── POST helper ────────────────────────────────────────────────────────────
+async function post(path, body) {
+  const resp = await fetch(API_BASE + path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({detail: resp.statusText}));
+    throw new Error(err.detail || `HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
+
+// ─── RECOMMENDATIONS ────────────────────────────────────────────────────────
+async function getRecommendations() {
+  setStatus('status-rec', 'Ищем лучшую технику…', 'info');
+  document.getElementById('results-rec').innerHTML = '';
+  routeLayer.clearLayers();
+  markerLayer.clearLayers();
+
+  const body = {
+    task_id:         document.getElementById('rec-task-id').value.trim(),
+    priority:        document.getElementById('rec-priority').value,
+    destination_uwi: document.getElementById('rec-uwi').value.trim(),
+    planned_start:   document.getElementById('rec-start').value + ':00',
+    duration_hours:  parseFloat(document.getElementById('rec-duration').value),
+  };
+  const taskType = document.getElementById('rec-task-type').value.trim();
+  if (taskType) body.task_type = taskType;
+
+  try {
+    const data = await post('/api/recommendations', body);
+    renderRecommendations(data);
+    clearStatus('status-rec');
+  } catch(e) {
+    setStatus('status-rec', '⚠ ' + e.message, 'error');
+  }
+}
+
+function renderRecommendations(data) {
+  // Store well coords for route rendering
+  _wellLon = data.well_lon || 0;
+  _wellLat = data.well_lat || 0;
+
+  // Show baseline comparison
+  const baselineCard = document.getElementById('baseline-card');
+  if (data.baseline) {
+    const b = data.baseline;
+    document.getElementById('baseline-name').textContent = b.name;
+    document.getElementById('baseline-meta').textContent =
+      `${b.distance_km} км · ETA ${b.eta_minutes} мин`;
+
+    // Compare with top recommendation if available
+    if (data.units && data.units.length > 0) {
+      const top = data.units[0];
+      const distDiff = b.distance_km - top.distance_km;
+      const etaDiff  = b.eta_minutes  - top.eta_minutes;
+      const savingEl = document.getElementById('baseline-saving');
+      if (distDiff > 0.1 || etaDiff > 1) {
+        savingEl.textContent =
+          `наш алгоритм экономит ${distDiff > 0 ? distDiff.toFixed(1) + ' км' : ''}`
+          + `${distDiff > 0 && etaDiff > 0 ? ' / ' : ''}`
+          + `${etaDiff > 0 ? etaDiff.toFixed(0) + ' мин' : ''}`;
+        savingEl.style.display = 'inline';
+      } else {
+        savingEl.style.display = 'none';
+      }
+    }
+    baselineCard.style.display = 'block';
+  } else {
+    baselineCard.style.display = 'none';
+  }
+
+  const el = document.getElementById('results-rec');
+  if (!data.units || data.units.length === 0) {
+    el.innerHTML = '<p style="padding:10px;color:#8892b0;font-size:12px;">Нет доступной техники</p>';
+    return;
+  }
+
+  const html = data.units.map((u, i) => `
+    <div class="unit-card ${i===0?'active':''}"
+         onclick="showRoute(${u.wialon_id}, this, ${u.pos_lon}, ${u.pos_lat})">
+      <div class="unit-name">
+        ${u.name}
+        <span class="badge badge-score">${(u.score*100).toFixed(0)}%</span>
+      </div>
+      <div class="unit-meta">
+        <span>📍 ${u.distance_km} км</span>
+        <span>⏱ ETA ${u.eta_minutes} мин</span>
+        <span>${u.free_at_minutes > 0 ? '⏳ занята ' + u.free_at_minutes.toFixed(0) + ' мин' : '✅ свободна'}</span>
+      </div>
+      ${u.reason ? `<div class="unit-reason">${u.reason}</div>` : ''}
+    </div>
+  `).join('');
+
+  el.innerHTML = html;
+
+  // Auto-load route for the best candidate
+  const best = data.units[0];
+  showRoute(best.wialon_id, el.querySelector('.unit-card'), best.pos_lon, best.pos_lat);
+}
+
+// ─── ROUTE ──────────────────────────────────────────────────────────────────
+async function buildRoute(fromLon, fromLat, toLon, toLat) {
+  // If called from the Route tab
+  if (fromLon === undefined) {
+    fromLon = parseFloat(document.getElementById('route-from-lon').value);
+    fromLat = parseFloat(document.getElementById('route-from-lat').value);
+    toLon   = parseFloat(document.getElementById('route-to-lon').value);
+    toLat   = parseFloat(document.getElementById('route-to-lat').value);
+    setStatus('status-route', 'Строим маршрут…', 'info');
+  }
+
+  routeLayer.clearLayers();
+  markerLayer.clearLayers();
+
+  const body = {
+    from: { lon: fromLon, lat: fromLat },
+    to:   { lon: toLon,   lat: toLat   },
+  };
+
+  try {
+    const data = await post('/api/route', body);
+    drawRoute(data, fromLon, fromLat, toLon, toLat);
+    clearStatus('status-route');
+    document.getElementById('route-info').style.display = 'block';
+    document.getElementById('route-dist').textContent = data.distance_km;
+    document.getElementById('route-time').textContent = data.time_minutes;
+  } catch(e) {
+    setStatus('status-route', '⚠ ' + e.message, 'error');
+  }
+}
+
+function drawRoute(data, fromLon, fromLat, toLon, toLat) {
+  routeLayer.clearLayers();
+  markerLayer.clearLayers();
+
+  if (data.coords && data.coords.length > 1) {
+    const latlngs = data.coords.map(c => [c[1], c[0]]);   // [lat, lon]
+    L.polyline(latlngs, {color: '#e94560', weight: 4, opacity: 0.9}).addTo(routeLayer);
+    map.fitBounds(L.polyline(latlngs).getBounds(), {padding: [40,40]});
+  }
+
+  // Start marker (vehicle)
+  L.marker([fromLat, fromLon], {icon: iconVehicle})
+    .bindPopup(`<b>Техника</b><br>${fromLon.toFixed(5)}, ${fromLat.toFixed(5)}`)
+    .addTo(markerLayer);
+
+  // End marker (well)
+  L.marker([toLat, toLon], {icon: iconWell})
+    .bindPopup(`<b>Скважина</b><br>${toLon.toFixed(5)}, ${toLat.toFixed(5)}`)
+    .addTo(markerLayer);
+}
+
+// Show route for a selected vehicle unit (from recommendations)
+async function showRoute(wialionId, cardEl, vLon, vLat) {
+  document.querySelectorAll('.unit-card').forEach(c => c.classList.remove('active'));
+  if (cardEl) cardEl.classList.add('active');
+
+  if (!vLon || !vLat || !_wellLon || !_wellLat) {
+    setStatus('status-rec', 'Координаты техники или скважины недоступны', 'error');
+    return;
+  }
+
+  setStatus('status-rec', 'Строим маршрут…', 'info');
+  routeLayer.clearLayers();
+  markerLayer.clearLayers();
+
+  const body = {
+    from: { lon: vLon, lat: vLat },
+    to:   { lon: _wellLon, lat: _wellLat },
+  };
+
+  try {
+    const data = await post('/api/route', body);
+    drawRoute(data, vLon, vLat, _wellLon, _wellLat);
+    setStatus('status-rec', `Маршрут: ${data.distance_km} км · ${data.time_minutes} мин`, 'ok');
+  } catch(e) {
+    setStatus('status-rec', '⚠ ' + e.message, 'error');
+  }
+}
+
+// ─── MULTITASK ──────────────────────────────────────────────────────────────
+async function evalMultitask() {
+  setStatus('status-multi', 'Оцениваем группировку…', 'info');
+  multiLayer.clearLayers();
+  document.getElementById('savings-panel').style.display = 'none';
+
+  const rawIds = document.getElementById('multi-ids').value;
+  const task_ids = rawIds.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+  if (task_ids.length < 2) {
+    setStatus('status-multi', 'Введите минимум 2 ID заявки', 'error');
+    return;
+  }
+
+  const body = {
+    task_ids,
+    constraints: {
+      max_total_time_minutes: parseInt(document.getElementById('multi-max-time').value),
+      max_detour_ratio:       parseFloat(document.getElementById('multi-detour').value),
+    }
+  };
+
+  try {
+    const data = await post('/api/multitask', body);
+    renderMultitask(data);
+    clearStatus('status-multi');
+  } catch(e) {
+    setStatus('status-multi', '⚠ ' + e.message, 'error');
+  }
+}
+
+function renderMultitask(data) {
+  const panel = document.getElementById('savings-panel');
+  panel.style.display = 'block';
+
+  document.getElementById('savings-pct').textContent =
+    data.savings_percent.toFixed(1) + '%';
+  document.getElementById('savings-desc').textContent =
+    `${data.strategy_summary.toUpperCase()} · ${data.total_distance_km} км (baseline: ${data.baseline_distance_km} км)`;
+  document.getElementById('savings-reason').textContent =
+    data.reason || '';
+
+  // Draw groups in different colours
+  const colours = ['#e94560','#64ffda','#ffd700','#ff9f43','#a29bfe'];
+  multiLayer.clearLayers();
+
+  const coords = data.task_coords || {};
+  const allLatLngs = [];
+
+  data.groups.forEach((group, gi) => {
+    const colour = colours[gi % colours.length];
+    const groupLatLngs = [];
+
+    group.forEach((tid) => {
+      const coord = coords[tid];
+      if (!coord) return;
+      const [lon, lat] = coord;
+      allLatLngs.push([lat, lon]);
+      groupLatLngs.push([lat, lon]);
+
+      L.marker([lat, lon], {
+        icon: L.divIcon({
+          html: `<div style="background:${colour};width:12px;height:12px;transform:rotate(45deg);border:2px solid #fff;"></div>`,
+          iconSize: [12, 12], iconAnchor: [6, 6], className: '',
+        }),
+      })
+        .bindPopup(`<b>${tid}</b><br>Группа ${gi + 1}`)
+        .addTo(multiLayer);
+    });
+
+    if (groupLatLngs.length > 1) {
+      L.polyline(groupLatLngs, {
+        color: colour, weight: 3, opacity: 0.85, dashArray: '6,4',
+      }).addTo(multiLayer);
+    }
+  });
+
+  if (allLatLngs.length > 0) {
+    map.fitBounds(allLatLngs, { padding: [40, 40] });
+  }
+}
+
+// ─── Health check on load ────────────────────────────────────────────────────
+window.addEventListener('load', async () => {
+  try {
+    const resp = await fetch(API_BASE + '/health');
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      console.info(`API OK: ${data.graph_nodes} nodes, ${data.graph_edges} edges`);
+    } else {
+      console.warn('API degraded:', data);
+    }
+  } catch(e) {
+    console.warn('API not reachable:', e.message);
+  }
+});
+</script>
+</body>
+</html>
