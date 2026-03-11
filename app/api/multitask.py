@@ -110,7 +110,7 @@ async def _load_tasks(db: AsyncSession, task_ids: list[str]) -> list[dict]:
             w.latitude  AS well_lat,
             w.longitude AS well_lon
         FROM tasks t
-        LEFT JOIN references.wells w ON w.uwi = t.destination_uwi
+        LEFT JOIN "references".wells w ON w.uwi = t.destination_uwi
         WHERE t.task_id IN ({placeholders})
     """)
 

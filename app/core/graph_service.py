@@ -128,7 +128,7 @@ class GraphService:
 
         result = await db.execute(
             text(
-                "SELECT longitude, latitude FROM references.wells "
+                'SELECT longitude, latitude FROM "references".wells '
                 "WHERE uwi = :uwi AND longitude IS NOT NULL AND latitude IS NOT NULL "
                 "LIMIT 1"
             ),

@@ -90,7 +90,7 @@ async def load_graph(session: AsyncSession) -> GraphData:
     # 1. Fetch nodes
     # ------------------------------------------------------------------
     nodes_result = await session.execute(
-        text("SELECT node_id, lon, lat FROM references.road_nodes ORDER BY node_id")
+        text('SELECT node_id, lon, lat FROM "references".road_nodes ORDER BY node_id')
     )
     node_rows = nodes_result.fetchall()
 
@@ -104,7 +104,7 @@ async def load_graph(session: AsyncSession) -> GraphData:
     # 2. Fetch edges
     # ------------------------------------------------------------------
     edges_result = await session.execute(
-        text("SELECT source, target, weight FROM references.road_edges")
+        text('SELECT source, target, weight FROM "references".road_edges')
     )
     edge_rows = edges_result.fetchall()
 

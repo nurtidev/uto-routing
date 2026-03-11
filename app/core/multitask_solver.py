@@ -82,16 +82,21 @@ def solve_grouping(
             improved = True
 
     # ── Total distance/time for the chosen grouping ────────────────
-    total_dist = 0.0
-    total_time = 0.0
-    for g in groups:
-        d, t = _group_tsp_approx(g, node_map, dist_matrix, speed_kmh)
-        total_dist += d
-        total_time += t
-
-    savings_pct = 0.0
-    if baseline_dist_km > 0:
-        savings_pct = max(0.0, (baseline_dist_km - total_dist) / baseline_dist_km * 100)
+    all_separate = all(len(g) == 1 for g in groups)
+    if all_separate:
+        total_dist = baseline_dist_km
+        total_time = baseline_time_min
+        savings_pct = 0.0
+    else:
+        total_dist = 0.0
+        total_time = 0.0
+        for g in groups:
+            d, t = _group_tsp_approx(g, node_map, dist_matrix, speed_kmh)
+            total_dist += d
+            total_time += t
+        savings_pct = 0.0
+        if baseline_dist_km > 0:
+            savings_pct = max(0.0, (baseline_dist_km - total_dist) / baseline_dist_km * 100)
 
     # ── Strategy summary ───────────────────────────────────────────
     if len(groups) == 1:

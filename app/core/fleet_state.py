@@ -111,13 +111,13 @@ async def _load_fleet_from_db(db: AsyncSession) -> FleetState:
     query = text("""
         WITH all_snaps AS (
             SELECT wialon_id, nm, registration_plate, pos_t, pos_x, pos_y, 1 AS snap
-            FROM references.wialon_units_snapshot_1
+            FROM "references".wialon_units_snapshot_1
             UNION ALL
             SELECT wialon_id, nm, registration_plate, pos_t, pos_x, pos_y, 2
-            FROM references.wialon_units_snapshot_2
+            FROM "references".wialon_units_snapshot_2
             UNION ALL
             SELECT wialon_id, nm, registration_plate, pos_t, pos_x, pos_y, 3
-            FROM references.wialon_units_snapshot_3
+            FROM "references".wialon_units_snapshot_3
         ),
         latest AS (
             SELECT DISTINCT ON (wialon_id)
@@ -140,8 +140,8 @@ async def _load_fleet_from_db(db: AsyncSession) -> FleetState:
                         ) / NULLIF(s3.pos_t - s1.pos_t, 0) * 3.6
                     ELSE NULL
                 END AS avg_speed_kmh
-            FROM references.wialon_units_snapshot_1 s1
-            LEFT JOIN references.wialon_units_snapshot_3 s3 USING (wialon_id)
+            FROM "references".wialon_units_snapshot_1 s1
+            LEFT JOIN "references".wialon_units_snapshot_3 s3 USING (wialon_id)
         )
         SELECT
             l.wialon_id,
