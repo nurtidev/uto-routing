@@ -1,17 +1,17 @@
 """
 Scoring module — computes composite score for vehicle candidates.
 
-Score formula (weights add up to 1.0):
-  score = 0.35 * (1 - norm_distance)
+Score formula (weights add up to 1.0) — official formula from organiser PPTX slide 7:
+  score = 0.30 * (1 - norm_distance)
         + 0.30 * (1 - norm_eta)
-        + 0.20 * availability_bonus
-        + 0.15 * priority_factor
+        + 0.15 * (1 - norm_idle)
+        + 0.25 * (1 - norm_sla_penalty)
 
 Where:
   norm_distance   — distance normalised to [0, 1] across all candidates
-  norm_eta        — ETA normalised to [0, 1] across all candidates
-  availability_bonus — 1.0 if free now, 0 < x < 1 if waiting, decays with wait time
-  priority_factor — based on task priority: high=1.0, medium=0.64, low=0.18
+  norm_eta        — ETA (travel + wait) normalised to [0, 1] across all candidates
+  norm_idle       — vehicle idle wait time normalised to [0, 1] (0 = free now)
+  norm_sla_penalty — normalised deadline violation: max(0, eta - deadline) / deadline
 """
 from __future__ import annotations
 
@@ -23,10 +23,10 @@ if TYPE_CHECKING:
     from app.core.fleet_state import VehicleInfo
 
 # Score weights — must sum to 1.0
-W_DISTANCE = 0.35
+W_DISTANCE = 0.30
 W_ETA = 0.30
-W_AVAILABILITY = 0.20
-W_PRIORITY = 0.15
+W_IDLE = 0.15
+W_SLA = 0.25
 
 PRIORITY_FACTOR: dict[str, float] = {
     "high": 1.0,
@@ -57,6 +57,9 @@ def score_candidates(
     from app.config import get_settings
     settings = get_settings()
 
+    # SLA deadline in minutes for this task priority
+    deadline_minutes = SLA_DEADLINE_HOURS.get(task_priority, 12.0) * 60
+
     scored = []
     for vehicle in candidates:
         dist_m = distances.get(vehicle.start_node, math.inf)
@@ -68,12 +71,15 @@ def score_candidates(
         speed_m_per_min = (vehicle.avg_speed_kmh or settings.default_avg_speed_kmh) * 1000 / 60
         travel_minutes = dist_m / speed_m_per_min if speed_m_per_min > 0 else math.inf
 
-        # ETA = travel time + wait if vehicle is currently busy
-        eta_minutes = travel_minutes + max(0.0, vehicle.free_at_minutes)
+        # Idle = time vehicle must wait before it can start (if currently busy)
+        idle_minutes = max(0.0, vehicle.free_at_minutes)
 
-        # Availability bonus: 1.0 if available now, decays exponentially with wait
-        wait = max(0.0, vehicle.free_at_minutes)
-        availability_bonus = math.exp(-wait / 120.0)  # half-value at 120 min wait
+        # ETA = travel time + idle wait
+        eta_minutes = travel_minutes + idle_minutes
+
+        # SLA penalty: how far ETA overshoots the deadline (0 if on time)
+        sla_penalty = max(0.0, eta_minutes - deadline_minutes) / max(deadline_minutes, 1.0)
+        sla_penalty = min(1.0, sla_penalty)  # cap at 1.0
 
         # Compatibility check (task_type, not priority)
         compatible = vehicle.is_compatible(task_type)
@@ -84,7 +90,8 @@ def score_candidates(
                 {
                     "distance_km": dist_m / 1000.0,
                     "eta_minutes": eta_minutes,
-                    "availability_bonus": availability_bonus,
+                    "idle_minutes": idle_minutes,
+                    "sla_penalty": sla_penalty,
                     "compatible": compatible,
                     "score": 0.0,   # filled below after normalisation
                 },
@@ -94,23 +101,28 @@ def score_candidates(
     if not scored:
         return []
 
-    # Normalise distance and ETA across candidates (min-max)
+    # Normalise all components across candidates (min-max)
     all_distances = [s["distance_km"] for _, s in scored]
     all_etas = [s["eta_minutes"] for _, s in scored]
+    all_idles = [s["idle_minutes"] for _, s in scored]
+    all_sla = [s["sla_penalty"] for _, s in scored]
 
     min_d, max_d = min(all_distances), max(all_distances)
     min_e, max_e = min(all_etas), max(all_etas)
-    pf = PRIORITY_FACTOR.get(task_priority, 0.5)
+    min_i, max_i = min(all_idles), max(all_idles)
+    min_s, max_s = min(all_sla), max(all_sla)
 
     for _, info in scored:
         norm_d = _safe_norm(info["distance_km"], min_d, max_d)
         norm_e = _safe_norm(info["eta_minutes"], min_e, max_e)
+        norm_i = _safe_norm(info["idle_minutes"], min_i, max_i)
+        norm_s = _safe_norm(info["sla_penalty"], min_s, max_s)
 
         info["score"] = (
             W_DISTANCE * (1.0 - norm_d)
             + W_ETA * (1.0 - norm_e)
-            + W_AVAILABILITY * info["availability_bonus"]
-            + W_PRIORITY * pf
+            + W_IDLE * (1.0 - norm_i)
+            + W_SLA * (1.0 - norm_s)
         )
 
     # Sort descending by score
@@ -125,13 +137,13 @@ def build_reason(vehicle: "VehicleInfo", score_info: dict, priority: str) -> str
     if score_info["compatible"]:
         parts.append("совместима по типу работ")
 
-    wait = vehicle.free_at_minutes
-    if wait <= 0:
+    idle = score_info.get("idle_minutes", vehicle.free_at_minutes)
+    if idle <= 0:
         parts.append("свободна прямо сейчас")
-    elif wait < 60:
-        parts.append(f"занята, освободится через {int(wait)} мин")
+    elif idle < 60:
+        parts.append(f"занята, освободится через {int(idle)} мин")
     else:
-        parts.append(f"занята, освободится через {wait/60:.1f} ч")
+        parts.append(f"занята, освободится через {idle/60:.1f} ч")
 
     dist = score_info["distance_km"]
     if dist < 5:

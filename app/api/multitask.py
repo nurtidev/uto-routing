@@ -53,19 +53,24 @@ async def multitask(
             detail="Graph service not initialised. Try again in a moment.",
         )
 
-    # 1. Load task details from DB
-    task_details = await _load_tasks(db, body.task_ids)
+    # 1. Load task details from dcm.records (real orders)
+    from app.core.orders import get_orders_as_tasks
+    task_details = await get_orders_as_tasks(db, body.task_ids)
     missing = set(body.task_ids) - {t["task_id"] for t in task_details}
     if missing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Tasks not found: {', '.join(sorted(missing))}",
+            detail=f"Orders not found: {', '.join(sorted(missing))}",
         )
 
-    # 2. Resolve node for each task's destination well
+    # 2. Resolve node and coordinates for each task's destination well
     for task in task_details:
         node = await graph_svc.resolve_well_node(db, task["destination_uwi"])
         task["node"] = node
+        coords = graph_svc.get_cached_well_coords(task["destination_uwi"])
+        if coords:
+            task["well_lon"] = coords[0]
+            task["well_lat"] = coords[1]
 
     # 3. Compute pairwise distance matrix between task nodes
     task_nodes = [t["node"] for t in task_details]

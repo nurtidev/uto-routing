@@ -147,32 +147,45 @@ def solve_batch(
     logger.info("OR-Tools VRPTW: %d vehicles, %d tasks, %d locations",
                 n_vehicles, n_tasks, n_locations)
 
+    # ── Open-end routing: add a virtual dummy depot ───────────────
+    # Vehicles end at the dummy depot (index = n_locations) at zero cost.
+    # This removes the mandatory return-to-origin constraint, which would
+    # otherwise inflate arc costs beyond the drop penalty for disconnected nodes.
+    dummy_depot_idx = n_locations
+    n_locations_total = n_locations + 1
+
+    # Extend dist/time matrices with a zero row+column for the dummy depot
+    ext_dist = [row + [0] for row in dist_matrix] + [[0] * n_locations_total]
+    ext_time = [row + [0] for row in time_matrix] + [[0] * n_locations_total]
+
     # ── Build OR-Tools data model ──────────────────────────────────
     data = _build_data_model(vehicles, tasks, dist_matrix, time_matrix)
+    starts = data["starts"]
+    ends   = [dummy_depot_idx] * n_vehicles   # all vehicles end at dummy depot
 
     # ── Create Routing Index Manager ──────────────────────────────
     manager = pywrapcp.RoutingIndexManager(
-        n_locations,
+        n_locations_total,
         n_vehicles,
-        data["starts"],   # per-vehicle start indices
-        data["ends"],     # per-vehicle end indices (same as start = open-end via depot trick)
+        starts,
+        ends,
     )
     routing = pywrapcp.RoutingModel(manager)
 
-    # ── Distance callback ──────────────────────────────────────────
+    # ── Distance callback (uses extended matrix) ───────────────────
     def distance_callback(from_index, to_index):
         from_node = manager.IndexToNode(from_index)
         to_node = manager.IndexToNode(to_index)
-        return int(dist_matrix[from_node][to_node])
+        return int(ext_dist[from_node][to_node])
 
     transit_callback_index = routing.RegisterTransitCallback(distance_callback)
     routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
-    # ── Time callback ──────────────────────────────────────────────
+    # ── Time callback (uses extended matrix) ───────────────────────
     def time_callback(from_index, to_index):
         from_node = manager.IndexToNode(from_index)
         to_node = manager.IndexToNode(to_index)
-        travel = int(time_matrix[from_node][to_node])
+        travel = int(ext_time[from_node][to_node])
         # Add service time at the origin node (if it's a task node)
         service = data["service_times"].get(from_node, 0)
         return travel + service
@@ -342,12 +355,14 @@ def _extract_solution(
 
     unassigned = [t.task_id for t in tasks if t.task_id not in served_task_ids]
 
+    from ortools.constraint_solver import routing_enums_pb2 as _enums
+    _ss = _enums.RoutingSearchStatus
     status_map = {
-        routing.ROUTING_OPTIMAL: "optimal",
-        routing.ROUTING_SUCCESS: "feasible",
-        routing.ROUTING_FAIL: "infeasible",
-        routing.ROUTING_FAIL_TIMEOUT: "timeout",
-        routing.ROUTING_INVALID: "invalid",
+        _ss.ROUTING_SUCCESS: "optimal",
+        _ss.ROUTING_FAIL: "infeasible",
+        _ss.ROUTING_FAIL_TIMEOUT: "timeout",
+        _ss.ROUTING_INVALID: "invalid",
+        _ss.ROUTING_NOT_SOLVED: "not_solved",
     }
     solver_status = status_map.get(routing.status(), "unknown")
 

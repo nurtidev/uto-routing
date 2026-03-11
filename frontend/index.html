@@ -246,7 +246,7 @@
     <h2>Параметры заявки</h2>
     <div class="form-group">
       <label>ID заявки</label>
-      <input id="rec-task-id" value="T-2025-0042" placeholder="T-2025-0042"/>
+      <input id="rec-task-id" value="G000002" placeholder="G000002"/>
     </div>
     <div class="form-group">
       <label>Приоритет</label>
@@ -258,11 +258,11 @@
     </div>
     <div class="form-group">
       <label>UWI скважины</label>
-      <input id="rec-uwi" value="05-1234-567" placeholder="05-1234-567"/>
+      <input id="rec-uwi" value="JET_4416" placeholder="JET_4416"/>
     </div>
     <div class="form-group">
       <label>Плановое начало</label>
-      <input id="rec-start" type="datetime-local" value="2025-02-20T08:00"/>
+      <input id="rec-start" type="datetime-local" value="2025-07-30T08:00"/>
     </div>
     <div class="form-group">
       <label>Длительность (ч)</label>
@@ -290,20 +290,20 @@
     <h2>Точка отправления (техника)</h2>
     <div class="form-group">
       <label>Долгота (lon)</label>
-      <input id="route-from-lon" value="68.12345" placeholder="68.12345"/>
+      <input id="route-from-lon" value="55.80" placeholder="55.80"/>
     </div>
     <div class="form-group">
       <label>Широта (lat)</label>
-      <input id="route-from-lat" value="51.67890" placeholder="51.67890"/>
+      <input id="route-from-lat" value="46.65" placeholder="46.65"/>
     </div>
     <h2>Точка назначения (скважина)</h2>
     <div class="form-group">
       <label>Долгота (lon)</label>
-      <input id="route-to-lon" value="68.09100" placeholder="68.09100"/>
+      <input id="route-to-lon" value="55.82" placeholder="55.82"/>
     </div>
     <div class="form-group">
       <label>Широта (lat)</label>
-      <input id="route-to-lat" value="51.70450" placeholder="51.70450"/>
+      <input id="route-to-lat" value="46.70" placeholder="46.70"/>
     </div>
     <button class="btn btn-primary" onclick="buildRoute()">Построить маршрут</button>
     <div id="status-route" class="status"></div>
@@ -316,7 +316,7 @@
   <div id="tab-multi" class="tab-content">
     <h2>Список заявок (через запятую)</h2>
     <div class="form-group">
-      <textarea id="multi-ids" rows="3" placeholder="T-2025-0042, T-2025-0043, T-2025-0044"></textarea>
+      <textarea id="multi-ids" rows="3" placeholder="G000004, G000005, G000006"></textarea>
     </div>
     <div class="form-group">
       <label>Макс. время выезда (мин)</label>
@@ -355,7 +355,7 @@ const API_BASE = (window.location.protocol === 'file:' || window.location.port =
 let _wellLon = 0, _wellLat = 0;
 
 // ─── Map setup ─────────────────────────────────────────────────────────────
-const map = L.map('map').setView([51.67, 68.12], 12);
+const map = L.map('map').setView([46.65, 55.82], 11);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© OpenStreetMap contributors',
@@ -539,15 +539,20 @@ function drawRoute(data, fromLon, fromLat, toLon, toLat) {
   routeLayer.clearLayers();
   markerLayer.clearLayers();
 
+  let routeStart = null;
   if (data.coords && data.coords.length > 1) {
     const latlngs = data.coords.map(c => [c[1], c[0]]);   // [lat, lon]
     L.polyline(latlngs, {color: '#e94560', weight: 4, opacity: 0.9}).addTo(routeLayer);
     map.fitBounds(L.polyline(latlngs).getBounds(), {padding: [40,40]});
+    // Use first snapped route point as vehicle display position (Wialon coords may be offset)
+    routeStart = data.coords[0];
   }
 
-  // Start marker (vehicle)
-  L.marker([fromLat, fromLon], {icon: iconVehicle})
-    .bindPopup(`<b>Техника</b><br>${fromLon.toFixed(5)}, ${fromLat.toFixed(5)}`)
+  // Start marker (vehicle) — use snapped road-graph position if available
+  const markerLon = (routeStart && routeStart[0]) ? routeStart[0] : fromLon;
+  const markerLat = (routeStart && routeStart[1]) ? routeStart[1] : fromLat;
+  L.marker([markerLat, markerLon], {icon: iconVehicle})
+    .bindPopup(`<b>Техника</b><br>${markerLon.toFixed(5)}, ${markerLat.toFixed(5)}`)
     .addTo(markerLayer);
 
   // End marker (well)

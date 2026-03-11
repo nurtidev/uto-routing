@@ -162,6 +162,9 @@ async def _load_fleet_from_db(db: AsyncSession) -> FleetState:
     busy_map = await _load_busy_map(db)
 
     # ── 3. Build VehicleInfo objects ──────────────────────────────
+    # Pre-fetch graph bounding box once to detect coordinate space mismatch
+    graph_bbox = graph_svc.bbox if graph_svc else None  # (min_lon, min_lat, max_lon, max_lat)
+
     vehicles: list[VehicleInfo] = []
     for row in rows:
         wialon_id = row["wialon_id"]
@@ -171,7 +174,20 @@ async def _load_fleet_from_db(db: AsyncSession) -> FleetState:
         # Snap to graph node
         start_node = None
         if graph_svc and pos_lon and pos_lat:
-            start_node = graph_svc.snap_to_node(pos_lon, pos_lat)
+            if graph_bbox and (
+                graph_bbox[0] <= pos_lon <= graph_bbox[2]
+                and graph_bbox[1] <= pos_lat <= graph_bbox[3]
+            ):
+                start_node = graph_svc.snap_to_node(pos_lon, pos_lat)
+            else:
+                # Vehicle coordinates are outside road graph bounds (mock data offset).
+                # Distribute vehicles deterministically across graph nodes.
+                start_node = graph_svc.node_at_index(int(wialon_id) * 7919)
+                logger.info(
+                    "Vehicle %s coords (%.4f, %.4f) outside graph bbox — "
+                    "assigned to graph node %s (deterministic fallback)",
+                    wialon_id, pos_lon, pos_lat, start_node,
+                )
 
         if start_node is None:
             logger.warning("Vehicle %s could not be snapped to graph, skipping", wialon_id)

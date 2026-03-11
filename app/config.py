@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     # Average vehicle speed fallback (km/h) if cannot be derived from snapshots
     default_avg_speed_kmh: float = 40.0
 
+    # Optional: Anthropic API key for LLM-generated reason text
+    anthropic_api_key: str = ""
+
     model_config = {"env_file": ".env"}
 
     @property

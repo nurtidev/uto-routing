@@ -48,6 +48,23 @@ class GraphService:
     def edge_count(self) -> int:
         return self._data.edge_count
 
+    # ── Graph bounds ───────────────────────────────────────────────
+
+    @property
+    def bbox(self) -> tuple[float, float, float, float]:
+        """Returns (min_lon, min_lat, max_lon, max_lat) of the road network."""
+        coords = self._data.node_coords
+        return (
+            float(coords[:, 0].min()),
+            float(coords[:, 1].min()),
+            float(coords[:, 0].max()),
+            float(coords[:, 1].max()),
+        )
+
+    def node_at_index(self, idx: int) -> int:
+        """Return node_id at array index idx (wraps around)."""
+        return int(self._data.node_ids[idx % len(self._data.node_ids)])
+
     # ── Map-matching ───────────────────────────────────────────────
 
     def snap_to_node(self, lon: float, lat: float) -> Optional[int]:

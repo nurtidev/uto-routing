@@ -113,25 +113,31 @@ async def batch_optimize(
                             detail="Fleet state is empty.")
 
     # ── 2. Load task rows from DB ──────────────────────────────────
-    task_rows = await _fetch_tasks(db, body.task_ids)
+    from app.core.orders import get_orders_as_tasks
+    task_rows = await get_orders_as_tasks(db, body.task_ids)
     found_ids = {r["task_id"] for r in task_rows}
     missing = set(body.task_ids) - found_ids
     if missing:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
-                            detail=f"Tasks not found: {sorted(missing)}")
+                            detail=f"Orders not found: {sorted(missing)}")
 
     # ── 3. Build location index ─────────────────────────────────────
     # All unique nodes = vehicle start nodes + task destination nodes
     vehicle_nodes: list[int] = [v.start_node for v in fleet.vehicles]
 
-    task_nodes: list[int] = []
+    task_nodes: list[int | None] = []
+    skipped_task_ids: set[str] = set()
     for row in task_rows:
         node = await graph_svc.resolve_well_node(db, row["destination_uwi"])
         if node is None:
-            logger.warning("Task %s: well %s has no node — using node 0 fallback",
+            logger.warning("Task %s: well %s has no coordinates — skipping",
                            row["task_id"], row["destination_uwi"])
-            node = vehicle_nodes[0]  # fallback to first vehicle position
+            skipped_task_ids.add(row["task_id"])
         task_nodes.append(node)
+
+    # Filter out tasks with unresolvable wells
+    task_rows = [r for r, n in zip(task_rows, task_nodes) if n is not None]
+    task_nodes = [n for n in task_nodes if n is not None]
 
     all_nodes = _dedup_ordered(vehicle_nodes + task_nodes)
     node_to_idx = {n: i for i, n in enumerate(all_nodes)}
@@ -184,6 +190,9 @@ async def batch_optimize(
 
     vehicle_name_map = {v.wialon_id: v.name for v in fleet.vehicles}
     response = _build_response(solution, vehicle_name_map)
+    # Prepend skipped (no-coord) tasks to unassigned list
+    if skipped_task_ids:
+        response.unassigned_tasks = sorted(skipped_task_ids) + response.unassigned_tasks
 
     # ── 8. Greedy baseline for comparison ──────────────────────────
     if body.use_greedy_baseline:
@@ -200,7 +209,30 @@ async def batch_optimize(
     return response
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────
+# ── GET /api/orders — list available order IDs ─────────────────────────────
+
+@router.get(
+    "/orders",
+    summary="List available order IDs from dcm.records",
+    description="Returns all active order numbers (e.g. 'G000002') that have a resolvable well and can be used in /api/batch or /api/multitask.",
+)
+async def list_orders(db: AsyncSession = Depends(get_db)) -> list[dict]:
+    from app.core.orders import get_orders_as_tasks
+    tasks = await get_orders_as_tasks(db, order_ids=None)
+    return [
+        {
+            "task_id": t["task_id"],
+            "destination_uwi": t["destination_uwi"],
+            "priority": t["priority"],
+            "task_type": t["task_type"],
+            "planned_start": t["planned_start"].isoformat() if t.get("planned_start") else None,
+            "planned_duration_hours": t["planned_duration_hours"],
+        }
+        for t in tasks
+    ]
+
+
+# ── Legacy helpers ──────────────────────────────────────────────────────────
 
 async def _fetch_tasks(db: AsyncSession, task_ids: list[str]) -> list[dict]:
     placeholders = ", ".join(f":id_{i}" for i in range(len(task_ids)))
@@ -237,6 +269,10 @@ def _time_window(row: dict, horizon_start: datetime) -> tuple[int, int]:
             start_day = planned.date()
         else:
             start_day = horizon_start.date()
+
+    # If the task date is in the past, treat it as today (demo / re-planning scenario)
+    if start_day < horizon_start.date():
+        start_day = horizon_start.date()
 
     base = datetime(start_day.year, start_day.month, start_day.day)
     tw_start_abs = base.replace(hour=shift_start_h % 24)
