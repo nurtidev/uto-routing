@@ -219,6 +219,33 @@
     /* ── Map ── */
     #map { flex: 1; }
 
+    /* Map legend */
+    #map-legend {
+      position: absolute;
+      bottom: 24px;
+      right: 10px;
+      z-index: 1000;
+      background: rgba(22,33,62,0.92);
+      border: 1px solid #0f3460;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 11px;
+      color: #8892b0;
+      pointer-events: none;
+    }
+    #map-legend div { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    #map-legend div:last-child { margin-bottom: 0; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid #fff; flex-shrink: 0; }
+    .legend-diamond { width: 10px; height: 10px; transform: rotate(45deg); border: 2px solid #fff; flex-shrink: 0; }
+
+    /* Orders dropdown */
+    #orders-loading {
+      font-size: 11px;
+      color: #8892b0;
+      padding: 4px 16px;
+      display: none;
+    }
+
     /* Loading spinner */
     .loading::after {
       content: ' ⟳';
@@ -243,7 +270,15 @@
 
   <!-- ── Tab: Recommendations ── -->
   <div id="tab-rec" class="tab-content active">
-    <h2>Параметры заявки</h2>
+    <h2>Выбор заявки</h2>
+    <div class="form-group">
+      <label>Заявка из БД</label>
+      <select id="rec-order-select" onchange="fillOrderFields(this.value)">
+        <option value="">— выбрать заявку —</option>
+      </select>
+    </div>
+    <div id="orders-loading">Загрузка заявок…</div>
+    <h2>Параметры</h2>
     <div class="form-group">
       <label>ID заявки</label>
       <input id="rec-task-id" value="G000002" placeholder="G000002"/>
@@ -338,21 +373,27 @@
 </div>
 
 <!-- ═══════════════════════════════ MAP ═══════════════════════════════ -->
-<div id="map"></div>
+<div id="map" style="position:relative;"></div>
+<div id="map-legend">
+  <div><div class="legend-dot" style="background:#e94560;"></div> Техника (свободна)</div>
+  <div><div class="legend-dot" style="background:#ff9f43;"></div> Техника (занята)</div>
+  <div><div class="legend-diamond" style="background:#64ffda;"></div> Скважина</div>
+  <div><div class="legend-diamond" style="background:#ffd700;"></div> Выбранная скважина</div>
+</div>
 
 <!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 // ─── Config ────────────────────────────────────────────────────────────────
-// In production (Railway) the frontend is served by the same FastAPI server —
-// use relative URLs. When opening as a local file or on a different port, fall
-// back to localhost:8000.
 const API_BASE = (window.location.protocol === 'file:' || window.location.port === '5500')
   ? 'http://localhost:8000'
   : '';
 
 // Last resolved well coords (set by getRecommendations, used by showRoute)
 let _wellLon = 0, _wellLat = 0;
+
+// Orders cache: task_id → order data
+let _ordersCache = {};
 
 // ─── Map setup ─────────────────────────────────────────────────────────────
 const map = L.map('map').setView([46.65, 55.82], 11);
@@ -363,22 +404,33 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 // Layer groups
+const vehicleLayer = L.layerGroup().addTo(map);  // all vehicles (always visible)
+const wellLayer    = L.layerGroup().addTo(map);   // all wells (always visible)
 const routeLayer   = L.layerGroup().addTo(map);
 const markerLayer  = L.layerGroup().addTo(map);
 const multiLayer   = L.layerGroup().addTo(map);
 
 // Icons
-const iconVehicle = L.divIcon({
-  html: '<div style="background:#e94560;width:14px;height:14px;border-radius:50%;border:2px solid #fff;"></div>',
-  iconSize: [14,14], iconAnchor: [7,7], className: ''
+const iconVehicleFree = L.divIcon({
+  html: '<div style="background:#e94560;width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 4px #e94560;"></div>',
+  iconSize: [12,12], iconAnchor: [6,6], className: ''
+});
+const iconVehicleBusy = L.divIcon({
+  html: '<div style="background:#ff9f43;width:12px;height:12px;border-radius:50%;border:2px solid #fff;"></div>',
+  iconSize: [12,12], iconAnchor: [6,6], className: ''
+});
+const iconVehicle = iconVehicleFree; // alias for route drawing
+const iconWellSmall = L.divIcon({
+  html: '<div style="background:#64ffda;width:8px;height:8px;transform:rotate(45deg);border:1px solid rgba(255,255,255,0.6);"></div>',
+  iconSize: [8,8], iconAnchor: [4,4], className: ''
 });
 const iconWell = L.divIcon({
-  html: '<div style="background:#64ffda;width:14px;height:14px;transform:rotate(45deg);border:2px solid #fff;"></div>',
+  html: '<div style="background:#ffd700;width:14px;height:14px;transform:rotate(45deg);border:2px solid #fff;"></div>',
   iconSize: [14,14], iconAnchor: [7,7], className: ''
 });
-const iconWellSmall = L.divIcon({
-  html: '<div style="background:#ffd700;width:10px;height:10px;transform:rotate(45deg);border:2px solid #fff;"></div>',
-  iconSize: [10,10], iconAnchor: [5,5], className: ''
+const iconWellRoute = L.divIcon({
+  html: '<div style="background:#64ffda;width:14px;height:14px;transform:rotate(45deg);border:2px solid #fff;"></div>',
+  iconSize: [14,14], iconAnchor: [7,7], className: ''
 });
 
 // ─── Tab switching ──────────────────────────────────────────────────────────
@@ -555,10 +607,11 @@ function drawRoute(data, fromLon, fromLat, toLon, toLat) {
     .bindPopup(`<b>Техника</b><br>${markerLon.toFixed(5)}, ${markerLat.toFixed(5)}`)
     .addTo(markerLayer);
 
-  // End marker (well)
+  // End marker (well) — highlighted gold when selected
   L.marker([toLat, toLon], {icon: iconWell})
     .bindPopup(`<b>Скважина</b><br>${toLon.toFixed(5)}, ${toLat.toFixed(5)}`)
-    .addTo(markerLayer);
+    .addTo(markerLayer)
+    .openPopup();
 }
 
 // Show route for a selected vehicle unit (from recommendations)
@@ -670,6 +723,104 @@ function renderMultitask(data) {
   }
 }
 
+// ─── Load all vehicles onto the map ────────────────────────────────────────
+async function loadVehicles() {
+  try {
+    const vehicles = await fetch(API_BASE + '/api/vehicles').then(r => r.json());
+    vehicleLayer.clearLayers();
+    vehicles.forEach(v => {
+      if (!v.lat || !v.lon) return;
+      const icon = v.status === 'busy' ? iconVehicleBusy : iconVehicleFree;
+      const statusText = v.status === 'busy'
+        ? `занята ещё ${v.free_at_minutes} мин`
+        : 'свободна';
+      L.marker([v.lat, v.lon], {icon})
+        .bindPopup(
+          `<b>${v.name}</b><br>` +
+          `${v.registration_plate ? v.registration_plate + '<br>' : ''}` +
+          `${v.avg_speed_kmh} км/ч · ${statusText}`
+        )
+        .addTo(vehicleLayer);
+    });
+    console.info(`Vehicles loaded: ${vehicles.length}`);
+  } catch(e) {
+    console.warn('Could not load vehicles:', e.message);
+  }
+}
+
+// ─── Load all wells onto the map ────────────────────────────────────────────
+async function loadWells() {
+  try {
+    const wells = await fetch(API_BASE + '/api/wells?limit=500').then(r => r.json());
+    wellLayer.clearLayers();
+    wells.forEach(w => {
+      if (!w.lat || !w.lon) return;
+      L.marker([w.lat, w.lon], {icon: iconWellSmall})
+        .bindPopup(`<b>${w.name}</b><br>${w.uwi}`)
+        .addTo(wellLayer);
+    });
+    console.info(`Wells loaded: ${wells.length}`);
+  } catch(e) {
+    console.warn('Could not load wells:', e.message);
+  }
+}
+
+// ─── Load orders into dropdown ───────────────────────────────────────────────
+async function loadOrders() {
+  const loadingEl = document.getElementById('orders-loading');
+  const selectEl  = document.getElementById('rec-order-select');
+  loadingEl.style.display = 'block';
+  try {
+    const orders = await fetch(API_BASE + '/api/orders').then(r => r.json());
+    _ordersCache = {};
+    orders.forEach(o => { _ordersCache[o.task_id] = o; });
+
+    // Populate dropdown
+    selectEl.innerHTML = '<option value="">— выбрать заявку —</option>';
+    orders.forEach(o => {
+      const label = `${o.task_id}` +
+        (o.task_type ? ` · ${o.task_type}` : '') +
+        ` [${o.priority}]`;
+      const opt = document.createElement('option');
+      opt.value = o.task_id;
+      opt.textContent = label;
+      selectEl.appendChild(opt);
+    });
+    console.info(`Orders loaded: ${orders.length}`);
+  } catch(e) {
+    console.warn('Could not load orders:', e.message);
+    selectEl.innerHTML = '<option value="">— ошибка загрузки —</option>';
+  } finally {
+    loadingEl.style.display = 'none';
+  }
+}
+
+// ─── Fill form fields from selected order ───────────────────────────────────
+function fillOrderFields(taskId) {
+  if (!taskId) return;
+  const o = _ordersCache[taskId];
+  if (!o) return;
+
+  document.getElementById('rec-task-id').value  = o.task_id;
+  document.getElementById('rec-uwi').value       = o.destination_uwi || '';
+  document.getElementById('rec-duration').value  = o.planned_duration_hours || 4;
+
+  const priorityMap = { high: 'high', medium: 'medium', low: 'low' };
+  const sel = document.getElementById('rec-priority');
+  sel.value = priorityMap[o.priority] || 'medium';
+
+  if (o.task_type) document.getElementById('rec-task-type').value = o.task_type;
+
+  if (o.planned_start) {
+    // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:MM)
+    const dt = new Date(o.planned_start);
+    const pad = n => String(n).padStart(2, '0');
+    const local = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}` +
+                  `T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    document.getElementById('rec-start').value = local;
+  }
+}
+
 // ─── Health check on load ────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
   try {
@@ -683,6 +834,9 @@ window.addEventListener('load', async () => {
   } catch(e) {
     console.warn('API not reachable:', e.message);
   }
+
+  // Load map data and orders in parallel
+  await Promise.all([loadVehicles(), loadWells(), loadOrders()]);
 });
 </script>
 </body>

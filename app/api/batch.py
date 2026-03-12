@@ -209,6 +209,73 @@ async def batch_optimize(
     return response
 
 
+# ── GET /api/vehicles — all vehicles with map positions ────────────────────
+
+@router.get(
+    "/vehicles",
+    summary="All vehicles with current positions for map display",
+)
+async def list_vehicles(db: AsyncSession = Depends(get_db)) -> list[dict]:
+    from app.core.fleet_state import get_fleet_state
+    from app.core.graph_service import get_graph_service
+
+    fleet = await get_fleet_state(db)
+    graph_svc = get_graph_service()
+
+    result = []
+    for v in fleet.vehicles:
+        # Use road-graph node coordinates for display (Wialon coords may be offset)
+        display_lon, display_lat = v.pos_lon, v.pos_lat
+        if graph_svc and v.start_node is not None:
+            coords = graph_svc.node_coords_by_id(v.start_node)
+            if coords:
+                display_lon, display_lat = coords
+
+        result.append({
+            "wialon_id": v.wialon_id,
+            "name": v.name,
+            "registration_plate": v.registration_plate,
+            "lon": display_lon,
+            "lat": display_lat,
+            "free_at_minutes": round(v.free_at_minutes, 1),
+            "status": "busy" if v.free_at_minutes > 0 else "free",
+            "avg_speed_kmh": round(v.avg_speed_kmh, 1),
+        })
+    return result
+
+
+# ── GET /api/wells — wells with coordinates for map display ────────────────
+
+@router.get(
+    "/wells",
+    summary="Wells with coordinates for map display",
+)
+async def list_wells(
+    limit: int = 500,
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    result = await db.execute(
+        text(
+            'SELECT uwi, well_name, longitude, latitude '
+            'FROM "references".wells '
+            'WHERE longitude IS NOT NULL AND latitude IS NOT NULL '
+            'ORDER BY uwi '
+            'LIMIT :lim'
+        ),
+        {"lim": limit},
+    )
+    rows = result.mappings().all()
+    return [
+        {
+            "uwi": r["uwi"],
+            "name": r["well_name"] or r["uwi"],
+            "lon": float(r["longitude"]),
+            "lat": float(r["latitude"]),
+        }
+        for r in rows
+    ]
+
+
 # ── GET /api/orders — list available order IDs ─────────────────────────────
 
 @router.get(

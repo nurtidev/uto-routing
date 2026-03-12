@@ -108,6 +108,11 @@ async def recommendations(
             task_priority=body.priority,
             task_type=body.task_type,
         )
+        # Use road-graph node coords for routing (Wialon coords may be offset)
+        node_coords = graph_svc.node_coords_by_id(vehicle.start_node)
+        display_lon = node_coords[0] if node_coords else vehicle.pos_lon
+        display_lat = node_coords[1] if node_coords else vehicle.pos_lat
+
         units.append(
             VehicleCandidate(
                 wialon_id=vehicle.wialon_id,
@@ -118,8 +123,8 @@ async def recommendations(
                 free_at_minutes=round(vehicle.free_at_minutes, 1),
                 compatible=score_info["compatible"],
                 reason=reason,
-                pos_lon=vehicle.pos_lon,
-                pos_lat=vehicle.pos_lat,
+                pos_lon=display_lon,
+                pos_lat=display_lat,
             )
         )
 

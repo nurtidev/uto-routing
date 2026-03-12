@@ -167,7 +167,7 @@ def build_reason(vehicle: "VehicleInfo", score_info: dict, priority: str) -> str
 
 
 def _safe_norm(val: float, min_val: float, max_val: float) -> float:
-    """Normalise value to [0, 1]. Returns 0.5 if all values are equal."""
+    """Normalise value to [0, 1]. Returns 0.0 if all values are equal (no spread)."""
     spread = max_val - min_val
     if spread < 1e-9:
         return 0.0

@@ -94,9 +94,23 @@ class TestShortestPath:
         assert dist == pytest.approx(0.0)
         assert len(coords) == 1
 
-    def test_no_path_returns_none(self, G):
-        # No back-edges: 5 → 1 is unreachable in this directed graph
-        assert shortest_path(G, 5, 1) is None
+    def test_no_path_returns_none(self):
+        # Truly disconnected graph — not even undirected fallback can connect them
+        G2 = nx.DiGraph()
+        G2.add_node(10, lon=68.0, lat=51.0)
+        G2.add_node(20, lon=69.0, lat=52.0)
+        # No edges between 10 and 20 in either direction
+        assert shortest_path(G2, 10, 20) is None
+
+    def test_undirected_fallback_finds_reverse_path(self, G):
+        # 5→1 has no directed path, but undirected fallback should succeed:
+        # undirected: 5-3 (6000), 3-2 (8000), 2-1 (10000) = 24000 m
+        result = shortest_path(G, 5, 1)
+        assert result is not None
+        nodes, dist, coords = result
+        assert dist == pytest.approx(24000.0)
+        assert nodes[0] == 5
+        assert nodes[-1] == 1
 
     def test_unknown_source_returns_none(self, G):
         assert shortest_path(G, 999, 1) is None

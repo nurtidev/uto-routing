@@ -65,6 +65,13 @@ class GraphService:
         """Return node_id at array index idx (wraps around)."""
         return int(self._data.node_ids[idx % len(self._data.node_ids)])
 
+    def node_coords_by_id(self, node_id: int) -> Optional[tuple[float, float]]:
+        """Return (lon, lat) for a graph node_id, or None if not found."""
+        idx = self._data.node_index.get(node_id)
+        if idx is None:
+            return None
+        return (float(self._data.node_coords[idx, 0]), float(self._data.node_coords[idx, 1]))
+
     # ── Map-matching ───────────────────────────────────────────────
 
     def snap_to_node(self, lon: float, lat: float) -> Optional[int]:

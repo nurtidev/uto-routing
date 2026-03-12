@@ -24,6 +24,17 @@ import networkx as nx
 
 logger = logging.getLogger(__name__)
 
+# Cache for undirected graph (expensive to build, reused across calls)
+_undirected_cache: dict[int, nx.Graph] = {}
+
+
+def _get_undirected(graph: nx.DiGraph) -> nx.Graph:
+    gid = id(graph)
+    if gid not in _undirected_cache:
+        _undirected_cache[gid] = graph.to_undirected()
+    return _undirected_cache[gid]
+
+
 # Type aliases
 NodeId = int
 PathResult = tuple[list[NodeId], float, list[list[float]]]
@@ -72,8 +83,17 @@ def shortest_path(
             graph, source, target=target, weight="weight"
         )
     except nx.NetworkXNoPath:
-        logger.debug("No path from node %d to node %d.", source, target)
-        return None
+        # Fallback: try undirected graph (road data may have one-way gaps)
+        logger.debug("No directed path %d→%d, trying undirected fallback.", source, target)
+        ugraph = _get_undirected(graph)
+        try:
+            distance, path_nodes = nx.single_source_dijkstra(
+                ugraph, source, target=target, weight="weight"
+            )
+            logger.info("Undirected fallback path %d→%d: %.0f m", source, target, distance)
+        except nx.NetworkXNoPath:
+            logger.debug("No path from node %d to node %d.", source, target)
+            return None
     except nx.NodeNotFound as exc:
         logger.warning("NodeNotFound during Dijkstra: %s", exc)
         return None
