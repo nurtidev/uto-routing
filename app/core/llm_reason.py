@@ -19,7 +19,12 @@ def _get_client():
     global _client
     if _client is not None:
         return _client
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    # Prefer settings (reads .env via Pydantic), fall back to raw os.getenv
+    try:
+        from app.config import get_settings
+        api_key = get_settings().anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
+    except Exception:
+        api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return None
     try:
