@@ -276,6 +276,40 @@
       margin-top: 4px;
     }
 
+    /* ── KPI Dashboard bar ── */
+    #kpi-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      padding: 10px 16px 4px;
+    }
+
+    .kpi-tile {
+      background: #0f3460;
+      border: 1px solid #1a4a80;
+      border-radius: 6px;
+      padding: 8px 10px;
+      text-align: center;
+    }
+
+    .kpi-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #64ffda;
+      line-height: 1.2;
+    }
+
+    .kpi-label {
+      font-size: 9px;
+      color: #8892b0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 2px;
+    }
+
+    .kpi-tile.sla .kpi-value { color: #2ecc71; }
+    .kpi-tile.savings .kpi-value { color: #ffd700; }
+
     /* ── Tabs ── */
     .tabs {
       display: flex;
@@ -381,11 +415,32 @@
   <div id="sidebar">
     <h1>ИС УТО · Маршрутизация спецтехники</h1>
 
+    <!-- KPI Dashboard -->
+    <div id="kpi-bar">
+      <div class="kpi-tile">
+        <div class="kpi-value" id="kpi-vehicles">—</div>
+        <div class="kpi-label">Машин / свободно</div>
+      </div>
+      <div class="kpi-tile">
+        <div class="kpi-value" id="kpi-orders">—</div>
+        <div class="kpi-label">Заявок в смене</div>
+      </div>
+      <div class="kpi-tile sla">
+        <div class="kpi-value" id="kpi-sla">—</div>
+        <div class="kpi-label">SLA high-prior.</div>
+      </div>
+      <div class="kpi-tile savings">
+        <div class="kpi-value" id="kpi-savings">—</div>
+        <div class="kpi-label">Экономия (км)</div>
+      </div>
+    </div>
+
     <!-- Tabs -->
     <div class="tabs">
       <div class="tab active" onclick="switchTab('rec')">Рекомендации</div>
       <div class="tab" onclick="switchTab('route')">Маршрут</div>
       <div class="tab" onclick="switchTab('multi')">Мульти-стоп</div>
+      <div class="tab" onclick="switchTab('batch')">Смена</div>
     </div>
 
     <!-- ── Tab: Recommendations ── -->
@@ -490,6 +545,22 @@
       </div>
     </div>
 
+    <!-- ── Tab: Batch (Смена) ── -->
+    <div id="tab-batch" class="tab-content">
+      <h2>Пакетное планирование смены</h2>
+      <div class="form-group">
+        <label>Заявки (через запятую или пусто = все)</label>
+        <textarea id="batch-ids" rows="3" placeholder="G000004, G000005 … или пусто для всех"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Лимит решателя (сек)</label>
+        <input id="batch-timelimit" type="number" value="30" min="5" max="120" />
+      </div>
+      <button class="btn btn-primary" onclick="runBatch()">Запустить OR-Tools</button>
+      <div id="status-batch" class="status"></div>
+      <div id="batch-results" style="padding:0 16px 16px;font-size:12px;"></div>
+    </div>
+
   </div>
 
   <!-- ═══════════════════════════════ MAP ═══════════════════════════════ -->
@@ -549,6 +620,7 @@
     const routeLayer = L.layerGroup().addTo(map);
     const markerLayer = L.layerGroup().addTo(map);
     const multiLayer = L.layerGroup().addTo(map);
+    const batchLayer = L.layerGroup().addTo(map);
 
     // Icons — SVG для техники и скважины
     const _truckSvgFree = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 26" width="36" height="26">
@@ -613,7 +685,7 @@
     // ─── Tab switching ──────────────────────────────────────────────────────────
     function switchTab(name) {
       document.querySelectorAll('.tab').forEach((t, i) => {
-        const tabs = ['rec', 'route', 'multi'];
+        const tabs = ['rec', 'route', 'multi', 'batch'];
         t.classList.toggle('active', tabs[i] === name);
       });
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -1019,6 +1091,130 @@
       }
     }
 
+    // ─── KPI Dashboard ───────────────────────────────────────────────────────────
+    async function loadStats() {
+      try {
+        const data = await fetch(API_BASE + '/api/stats').then(r => r.json());
+
+        document.getElementById('kpi-vehicles').textContent =
+          `${data.vehicle_count} / ${data.free_vehicle_count}`;
+        document.getElementById('kpi-orders').textContent =
+          data.order_count ?? '—';
+        document.getElementById('kpi-sla').textContent =
+          data.sla_compliance_pct != null ? `${data.sla_compliance_pct}%` : '—';
+        document.getElementById('kpi-savings').textContent =
+          data.estimated_savings_km != null ? `−${data.estimated_savings_km} км` : '—';
+
+        console.info('Stats loaded:', data);
+      } catch (e) {
+        console.warn('Could not load stats:', e.message);
+      }
+    }
+
+    // ─── BATCH PLANNING ──────────────────────────────────────────────────────────
+    async function runBatch() {
+      setStatus('status-batch', 'OR-Tools решает задачу…', 'info');
+      document.getElementById('batch-results').innerHTML = '';
+      batchLayer.clearLayers();
+
+      const rawIds = document.getElementById('batch-ids').value.trim();
+      const taskIds = rawIds
+        ? rawIds.split(/[,\s]+/).map(s => s.trim()).filter(Boolean)
+        : Object.keys(_ordersCache);
+
+      if (taskIds.length === 0) {
+        setStatus('status-batch', 'Загрузите заявки или введите ID вручную', 'error');
+        return;
+      }
+
+      const body = {
+        task_ids: taskIds,
+        time_limit_seconds: parseInt(document.getElementById('batch-timelimit').value),
+        use_greedy_baseline: true,
+      };
+
+      try {
+        const data = await post('/api/batch', body);
+        renderBatchResults(data);
+        clearStatus('status-batch');
+      } catch (e) {
+        setStatus('status-batch', '⚠ ' + e.message, 'error');
+      }
+    }
+
+    function renderBatchResults(data) {
+      const ROUTE_COLORS = [
+        '#e94560', '#64ffda', '#ffd700', '#ff9f43', '#a29bfe',
+        '#fd79a8', '#00cec9', '#6c5ce7', '#fdcb6e', '#55efc4',
+      ];
+
+      batchLayer.clearLayers();
+      const allLatLngs = [];
+
+      (data.routes || []).forEach((route, ri) => {
+        const color = ROUTE_COLORS[ri % ROUTE_COLORS.length];
+        const stepCoords = [];
+
+        (route.steps || []).forEach(step => {
+          if (step.lon && step.lat) {
+            stepCoords.push([step.lat, step.lon]);
+            allLatLngs.push([step.lat, step.lon]);
+
+            L.circleMarker([step.lat, step.lon], {
+              radius: 7,
+              color: '#fff',
+              weight: 1.5,
+              fillColor: color,
+              fillOpacity: 0.9,
+            })
+              .bindPopup(
+                `<b>${step.task_id}</b><br>` +
+                `${route.vehicle_name || 'Машина'}<br>` +
+                `Прибытие: ${Math.round(step.arrival_minutes)} мин`
+              )
+              .addTo(batchLayer);
+          }
+        });
+
+        if (stepCoords.length > 1) {
+          L.polyline(stepCoords, {
+            color: '#1a1a2e', weight: 5, opacity: 0.35,
+          }).addTo(batchLayer);
+          L.polyline(stepCoords, {
+            color, weight: 2.5, opacity: 0.9, dashArray: '6,4',
+          }).addTo(batchLayer);
+        }
+      });
+
+      if (allLatLngs.length > 0) {
+        map.fitBounds(allLatLngs, { padding: [50, 50] });
+      }
+
+      const savings = data.savings_percent != null
+        ? `<span style="color:#64ffda;font-weight:700">−${data.savings_percent}% vs greedy</span>`
+        : '';
+      const unassigned = (data.unassigned_tasks || []).length;
+
+      document.getElementById('batch-results').innerHTML = `
+        <div style="background:#0a3d2e;border:1px solid #0e5c45;border-radius:6px;padding:10px;margin-bottom:8px;">
+          <div style="font-size:16px;font-weight:700;color:#64ffda;">
+            ${data.solver_status?.toUpperCase()} ${savings}
+          </div>
+          <div style="color:#8892b0;margin-top:4px;">
+            ${(data.routes || []).length} маршрутов · ${data.total_distance_km} км общий пробег
+            ${unassigned > 0 ? ` · <span style="color:#e94560">${unassigned} не назначено</span>` : ' · все назначены'}
+          </div>
+        </div>
+        ${(data.routes || []).map((r, i) => `
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:11px;">
+            <div style="width:10px;height:10px;border-radius:50%;background:${ROUTE_COLORS[i % ROUTE_COLORS.length]};flex-shrink:0;"></div>
+            <span style="color:#ccd6f6;">${r.vehicle_name || r.vehicle_id}</span>
+            <span style="color:#8892b0;">${r.steps?.length || 0} заявок · ${r.total_distance_km?.toFixed(1)} км</span>
+          </div>
+        `).join('')}
+      `;
+    }
+
     // ─── Health check on load ────────────────────────────────────────────────────
     window.addEventListener('load', async () => {
       try {
@@ -1033,8 +1229,8 @@
         console.warn('API not reachable:', e.message);
       }
 
-      // Load map data and orders in parallel
-      await Promise.all([loadVehicles(), loadWells(), loadOrders()]);
+      // Load map data, orders and KPI stats in parallel
+      await Promise.all([loadVehicles(), loadWells(), loadOrders(), loadStats()]);
     });
   </script>
 </body>

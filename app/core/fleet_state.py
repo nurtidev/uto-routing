@@ -222,8 +222,66 @@ async def _load_fleet_from_db(db: AsyncSession) -> FleetState:
 async def _load_busy_map(db: AsyncSession) -> dict[int, float]:
     """
     Returns {wialon_id: free_at_minutes} for currently assigned vehicles.
-    A vehicle is busy until the end of its active task.
-    Placeholder: returns empty dict until task assignment table is populated.
+    Reads active TRS_ORDER records from dcm that have a vehicle assigned
+    and have not yet reached their planned end time.
+    Falls back to empty dict if the assignment table is unavailable.
     """
-    # TODO: join with task assignment table when available
-    return {}
+    from sqlalchemy import text
+    from datetime import datetime, timezone
+
+    try:
+        # Fetch orders with assigned wialon_id and planned duration that end in the future
+        query = text("""
+            SELECT
+                v.value_int                                                         AS wialon_id,
+                MAX(CASE WHEN v2.indicator_id = 29 THEN v2.value_int END)           AS planned_hours,
+                MAX(CASE WHEN v2.indicator_id = 14 THEN v2.value_datetime END)      AS work_date
+            FROM dcm.records r
+            JOIN dcm.record_indicator_values v  ON v.record_id = r.id  AND v.indicator_id = 130
+            JOIN dcm.record_indicator_values v2 ON v2.record_id = r.id
+            WHERE r.document_id = 2
+              AND r.is_deleted = FALSE
+              AND v.value_int IS NOT NULL
+            GROUP BY v.value_int
+        """)
+        result = await db.execute(query)
+        rows = result.mappings().all()
+    except Exception as exc:
+        logger.warning("_load_busy_map: DB query failed (%s), returning empty map", exc)
+        return {}
+
+    now_utc = datetime.now(tz=timezone.utc)
+    busy_map: dict[int, float] = {}
+
+    for row in rows:
+        wialon_id = row.get("wialon_id")
+        if not wialon_id:
+            continue
+
+        work_date = row.get("work_date")
+        planned_hours = float(row.get("planned_hours") or 4)
+
+        if work_date is None:
+            continue
+
+        # Make work_date timezone-aware if needed
+        if hasattr(work_date, "tzinfo") and work_date.tzinfo is None:
+            work_date = work_date.replace(tzinfo=timezone.utc)
+
+        # Assume day shift starts at 08:00
+        task_start = work_date.replace(hour=8, minute=0, second=0, microsecond=0)
+        task_end = task_start.replace(hour=task_start.hour) if False else (
+            task_start.replace(
+                hour=min(task_start.hour + int(planned_hours), 23),
+                minute=int((planned_hours % 1) * 60),
+            )
+        )
+
+        # free_at_minutes = minutes from now until task ends (0 if already finished)
+        delta_seconds = (task_end - now_utc).total_seconds()
+        if delta_seconds > 0:
+            busy_map[int(wialon_id)] = delta_seconds / 60.0
+
+    if busy_map:
+        logger.info("_load_busy_map: %d vehicles marked as busy", len(busy_map))
+    return busy_map

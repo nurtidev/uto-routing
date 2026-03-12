@@ -70,12 +70,13 @@ app.add_middleware(
 )
 
 # ── Routers ────────────────────────────────────────────────────────
-from app.api import recommendations, route, multitask, batch  # noqa: E402
+from app.api import recommendations, route, multitask, batch, fleet  # noqa: E402
 
 app.include_router(recommendations.router)
 app.include_router(route.router)
 app.include_router(multitask.router)
 app.include_router(batch.router)
+app.include_router(fleet.router)
 
 # ── Frontend (static) ──────────────────────────────────────────────
 app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")

@@ -51,6 +51,8 @@ class RouteStepOut(BaseModel):
     task_id: str
     arrival_minutes: float
     departure_minutes: float
+    lon: float | None = None   # well coordinates for map display
+    lat: float | None = None
 
 
 class VehicleRouteOut(BaseModel):
@@ -189,7 +191,15 @@ async def batch_optimize(
     )
 
     vehicle_name_map = {v.wialon_id: v.name for v in fleet.vehicles}
-    response = _build_response(solution, vehicle_name_map)
+
+    # Build task_id → (lon, lat) map for map display
+    task_coord_map: dict[str, tuple[float, float]] = {}
+    for row, node in zip(task_rows, task_nodes):
+        coords = graph_svc.node_coords_by_id(node)
+        if coords:
+            task_coord_map[row["task_id"]] = (coords[0], coords[1])
+
+    response = _build_response(solution, vehicle_name_map, task_coord_map)
     # Prepend skipped (no-coord) tasks to unassigned list
     if skipped_task_ids:
         response.unassigned_tasks = sorted(skipped_task_ids) + response.unassigned_tasks
@@ -197,7 +207,7 @@ async def batch_optimize(
     # ── 8. Greedy baseline for comparison ──────────────────────────
     if body.use_greedy_baseline:
         baseline = solve_greedy_baseline(vehicles_in, tasks_in, dist_matrix, time_matrix)
-        baseline_routes = _build_routes_out(baseline, vehicle_name_map)
+        baseline_routes = _build_routes_out(baseline, vehicle_name_map, task_coord_map)
         response.baseline_status = baseline.solver_status
         response.baseline_distance_km = baseline.total_distance_km
         response.baseline_routes = baseline_routes
@@ -378,17 +388,26 @@ def _make_matrix(
     return m
 
 
-def _build_response(solution, vehicle_name_map: dict[int, str]) -> BatchResponse:
+def _build_response(
+    solution,
+    vehicle_name_map: dict[int, str],
+    task_coord_map: dict[str, tuple[float, float]] | None = None,
+) -> BatchResponse:
     return BatchResponse(
         solver_status=solution.solver_status,
         objective_value=solution.objective_value,
         total_distance_km=solution.total_distance_km,
-        routes=_build_routes_out(solution, vehicle_name_map),
+        routes=_build_routes_out(solution, vehicle_name_map, task_coord_map),
         unassigned_tasks=solution.unassigned_tasks,
     )
 
 
-def _build_routes_out(solution, vehicle_name_map: dict[int, str]) -> list[VehicleRouteOut]:
+def _build_routes_out(
+    solution,
+    vehicle_name_map: dict[int, str],
+    task_coord_map: dict[str, tuple[float, float]] | None = None,
+) -> list[VehicleRouteOut]:
+    coord_map = task_coord_map or {}
     out = []
     for r in solution.routes:
         out.append(VehicleRouteOut(
@@ -398,6 +417,8 @@ def _build_routes_out(solution, vehicle_name_map: dict[int, str]) -> list[Vehicl
                 task_id=s.task_id,
                 arrival_minutes=s.arrival_minutes,
                 departure_minutes=s.departure_minutes,
+                lon=coord_map.get(s.task_id, (None, None))[0],
+                lat=coord_map.get(s.task_id, (None, None))[1],
             ) for s in r.steps],
             total_distance_km=round(r.total_distance_m / 1000, 2),
             total_time_minutes=round(r.total_time_minutes, 1),

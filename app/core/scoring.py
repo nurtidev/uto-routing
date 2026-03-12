@@ -28,12 +28,6 @@ W_ETA = 0.30
 W_IDLE = 0.15
 W_SLA = 0.25
 
-PRIORITY_FACTOR: dict[str, float] = {
-    "high": 1.0,
-    "medium": 0.64,
-    "low": 0.18,
-}
-
 # SLA deadline offsets (hours)
 SLA_DEADLINE_HOURS: dict[str, float] = {
     "high": 2.0,
