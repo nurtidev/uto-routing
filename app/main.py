@@ -98,6 +98,18 @@ async def health():
     )
 
 
+@app.get("/api/my-ip", tags=["system"], summary="Show outbound IP of this server")
+async def my_ip():
+    """Returns the public IP Railway uses for outbound connections. Share with DB admin to whitelist."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get("https://api.ipify.org?format=json")
+            return r.json()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 @app.get("/", tags=["system"], include_in_schema=False)
 async def root():
     return FileResponse("frontend/index.html")

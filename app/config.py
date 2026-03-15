@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     db_name: str = "uto"
     db_user: str = "postgres"
     db_password: str = ""
+    db_ssl: bool = False
 
     # Average vehicle speed fallback (km/h) if cannot be derived from snapshots
     default_avg_speed_kmh: float = 40.0
