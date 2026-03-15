@@ -39,6 +39,7 @@
 | Несколько заявок рядом | `POST /api/multitask` | Проверяет — стоит ли объединить их в один рейс (крюк ≤1.3×, ограничение по времени смены) |
 | Планирование смены | `POST /api/batch` | **OR-Tools VRPTW** назначает все заявки оптимально — с временными окнами, приоритетами и расстояниями |
 | KPI дашборд | `GET /api/stats` | Текущие показатели: флот, заявки, SLA compliance, оценка экономии |
+| Мониторинг | `GET /metrics` | Prometheus-метрики: latency, кол-во запросов, состояние флота и графа |
 
 ---
 
@@ -253,6 +254,7 @@ app/api/
   ├── fleet.py            — POST /api/fleet/refresh, GET /api/stats
   ├── route.py            — POST /api/route
   └── multitask.py        — POST /api/multitask
+GET /metrics              — Prometheus metrics (latency, fleet, graph gauges)
     │
     ▼
 app/core/
@@ -314,7 +316,8 @@ score = 0.30 × (1 − norm_distance)
 | Оптимизатор | Google OR-Tools (VRPTW) |
 | БД | PostgreSQL + SQLAlchemy async (asyncpg) |
 | Валидация | Pydantic v2 |
-| LLM объяснения | Anthropic Claude Haiku (fallback → шаблон) |
+| LLM объяснения | Anthropic Claude Haiku (timeout 5s, fallback → шаблон) |
+| Мониторинг | Prometheus client (метрики latency, флота, графа) |
 | Карта | Leaflet.js |
 | Deploy | Railway |
 
@@ -362,9 +365,11 @@ ANTHROPIC_API_KEY=...     # опционально — включает LLM-об
 
 ### GPS-позиции машин
 
-Снапшоты Wialon в предоставленной БД (`wialon_units_snapshot_1/2/3`) содержат обезличенные координаты, которые не совпадают с bbox графа дорог месторождения. Система детектирует это автоматически и распределяет машины по узлам графа детерминированно (`node_at_index(wialon_id × 7919)`), что позволяет корректно работать алгоритму при демонстрации.
+Снапшоты Wialon в предоставленной БД (`wialon_units_snapshot_1/2/3`) хранят координаты в сдвинутой системе (pos_x ≈ 59–60, pos_y ≈ 49–50), тогда как граф дорог использует реальные WGS84-координаты месторождения (lon ≈ 55–56, lat ≈ 46–47).
 
-**В production-интеграции** с реальным Wialon GPS-координаты машин совпадают с координатами графа — `snap_to_node(lon, lat)` работает через KD-Tree без fallback.
+Система автоматически применяет коррекцию смещения (`WIALON_LON_OFFSET = −4.0`, `WIALON_LAT_OFFSET = −3.0`) перед snap-to-node, что позволяет корректно привязать машины к графу. Если после коррекции координата всё ещё выходит за bbox — применяется детерминированный fallback (`node_at_index(wialon_id × 7919)`).
+
+**В production-интеграции** с реальным Wialon GPS-координаты совпадают с графом — коррекция и fallback не задействуются.
 
 ### Обновление GPS в реальном времени
 
@@ -377,6 +382,6 @@ ANTHROPIC_API_KEY=...     # опционально — включает LLM-об
 ### Тесты
 
 ```bash
-pytest tests/ -v          # 83 теста: scoring, shortest_path, graph_loader, compatibility, multitask_solver
+pytest tests/ -v          # 5 файлов: graph_loader, shortest_path, scoring, compatibility, multitask_solver
 pytest tests/ --cov=app   # с покрытием
 ```
