@@ -12,6 +12,7 @@ Key indicators:
 """
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 from datetime import date, datetime, timezone
@@ -91,7 +92,8 @@ async def resolve_well_uwi(db: AsyncSession, well_desc: str) -> Optional[str]:
     Strategy:
       1. Exact match on well_name.
       2. Prefix match: G_XXXX or XXXX (numeric part before '/').
-      3. Returns None if no match.
+      3. Fuzzy match via difflib.SequenceMatcher across candidate wells (ratio ≥ 0.60).
+      4. Returns None if all strategies fail.
     """
     if well_desc in _well_uwi_cache:
         return _well_uwi_cache[well_desc]
@@ -121,7 +123,42 @@ async def resolve_well_uwi(db: AsyncSession, well_desc: str) -> Optional[str]:
             _well_uwi_cache[well_desc] = r[0]
             return r[0]
 
-    logger.warning("Could not resolve well '%s' to UWI", well_desc)
+    # Strategy 3: fuzzy match using difflib (stdlib, no extra deps)
+    # Extract alphanumeric tokens (length >= 2) and query candidate wells
+    tokens = [t for t in re.findall(r"[A-Za-z0-9_/]+", well_desc) if len(t) >= 2]
+    if tokens:
+        conditions = " OR ".join(f"well_name ILIKE :tok_{i}" for i in range(len(tokens)))
+        tok_params: dict = {f"tok_{i}": f"%{t}%" for i, t in enumerate(tokens)}
+        tok_params["lim"] = 50
+        cand_rows = await db.execute(
+            text(
+                f'SELECT uwi, well_name FROM "references".wells '
+                f"WHERE ({conditions}) AND longitude IS NOT NULL LIMIT :lim"
+            ),
+            tok_params,
+        )
+        candidates = cand_rows.fetchall()
+
+        if candidates:
+            norm_desc = well_desc.lower().strip()
+            best_uwi, best_ratio = None, 0.0
+            for uwi, well_name in candidates:
+                ratio = difflib.SequenceMatcher(
+                    None, norm_desc, (well_name or "").lower().strip()
+                ).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_uwi = uwi
+
+            if best_ratio >= 0.60 and best_uwi:
+                logger.info(
+                    "Well '%s' fuzzy-matched → uwi=%s (ratio=%.2f)",
+                    well_desc, best_uwi, best_ratio,
+                )
+                _well_uwi_cache[well_desc] = best_uwi
+                return best_uwi
+
+    logger.warning("Could not resolve well '%s' to UWI (all strategies failed)", well_desc)
     _well_uwi_cache[well_desc] = None
     return None
 

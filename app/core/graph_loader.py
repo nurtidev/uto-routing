@@ -47,6 +47,10 @@ class GraphData:
     # Fast reverse lookup: node_id (int) → index in node_ids / node_coords
     node_index: dict[int, int] = field(default_factory=dict)
 
+    # Nodes belonging to the largest weakly connected component.
+    # Pairs where both nodes are outside this set will never have a directed path.
+    largest_wcc_nodes: frozenset = field(default_factory=frozenset)
+
     @property
     def node_count(self) -> int:
         return len(self.node_ids)
@@ -54,6 +58,10 @@ class GraphData:
     @property
     def edge_count(self) -> int:
         return self.graph.number_of_edges()
+
+    def in_main_component(self, node_id: int) -> bool:
+        """True if node_id is part of the largest weakly connected component."""
+        return node_id in self.largest_wcc_nodes
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +151,28 @@ async def load_graph(session: AsyncSession) -> GraphData:
         )
 
     # ------------------------------------------------------------------
-    # 4. Build numpy arrays + KD-Tree
+    # 4. Analyse weakly connected components
+    # ------------------------------------------------------------------
+    wccs = sorted(nx.weakly_connected_components(G), key=len, reverse=True)
+    largest_wcc = frozenset(wccs[0]) if wccs else frozenset()
+
+    if len(wccs) == 1:
+        logger.info("Graph is fully connected (1 weakly connected component).")
+    else:
+        isolated = sum(1 for c in wccs if len(c) == 1)
+        small = [c for c in wccs[1:] if len(c) > 1]
+        logger.warning(
+            "Graph has %d weakly connected components. "
+            "Largest: %d nodes. Small components (size ≥ 2): %d. Isolated nodes: %d. "
+            "Routing across disconnected components will use undirected fallback.",
+            len(wccs), len(largest_wcc), len(small), isolated,
+        )
+        if small:
+            sizes = sorted((len(c) for c in small), reverse=True)
+            logger.warning("Small component sizes: %s", sizes[:10])
+
+    # ------------------------------------------------------------------
+    # 5. Build numpy arrays + KD-Tree
     # ------------------------------------------------------------------
     node_ids_arr = np.array(node_ids_list, dtype=np.int64)
     coords_arr = np.array(coords_list, dtype=np.float64)  # shape (N, 2): [lon, lat]
@@ -156,7 +185,7 @@ async def load_graph(session: AsyncSession) -> GraphData:
     }
 
     # ------------------------------------------------------------------
-    # 5. Cache & return
+    # 6. Cache & return
     # ------------------------------------------------------------------
     _graph_data = GraphData(
         graph=G,
@@ -164,6 +193,7 @@ async def load_graph(session: AsyncSession) -> GraphData:
         node_ids=node_ids_arr,
         node_coords=coords_arr,
         node_index=node_index,
+        largest_wcc_nodes=largest_wcc,
     )
 
     logger.info(

@@ -156,6 +156,24 @@ def batch_distances(
             logger.warning("Dijkstra error from node %d: %s", src, exc)
             raw = {}
 
+        # For targets unreachable via directed paths, try undirected fallback
+        missing_targets = target_set - set(raw.keys()) - {src}
+        if missing_targets:
+            ugraph = _get_undirected(graph)
+            try:
+                raw_u: dict[NodeId, float] = dict(
+                    nx.single_source_dijkstra_path_length(ugraph, src, weight="weight")
+                )
+                recovered = {t: raw_u[t] for t in missing_targets if t in raw_u}
+                if recovered:
+                    logger.info(
+                        "batch_distances: undirected fallback recovered %d target(s) from source %d",
+                        len(recovered), src,
+                    )
+                    raw.update(recovered)
+            except nx.NetworkXError:
+                pass
+
         # Keep only the distances we actually need
         source_lengths[src] = {t: raw[t] for t in target_set if t in raw}
 

@@ -89,7 +89,14 @@ async def generate_reason(
             model="claude-haiku-4-5-20251001",
             max_tokens=120,
             messages=[{"role": "user", "content": prompt}],
+            timeout=5.0,
         )
+        if not message.content:
+            logger.warning("LLM returned empty content, falling back to template")
+            return _template_reason(
+                vehicle_name, score, distance_km, eta_minutes,
+                free_at_minutes, compatible, task_priority,
+            )
         return message.content[0].text.strip()
 
     except Exception as exc:

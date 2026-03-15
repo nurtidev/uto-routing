@@ -17,11 +17,21 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+# ── Wialon coordinate offset correction ──────────────────────────
+# Wialon snapshot tables store positions in a shifted coordinate space:
+#   pos_x ≈ 59–60, pos_y ≈ 49–50  (Wialon mock data)
+# Road graph uses real WGS84:
+#   lon  ≈ 55–56, lat  ≈ 46–47   (Mangistau region, Kazakhstan)
+# Correction: subtract these offsets to map Wialon → WGS84.
+WIALON_LON_OFFSET: float = -4.0
+WIALON_LAT_OFFSET: float = -3.0
 
 # ── Singleton fleet state (refreshed at startup and on demand) ────
 _fleet_state: Optional["FleetState"] = None
@@ -104,6 +114,7 @@ async def _load_fleet_from_db(db: AsyncSession) -> FleetState:
     """
     from sqlalchemy import text
     from app.core.graph_service import get_graph_service
+    from app.core.compatibility import get_vehicle_skills  # noqa: PLC0415
 
     graph_svc = get_graph_service()
 
@@ -168,8 +179,12 @@ async def _load_fleet_from_db(db: AsyncSession) -> FleetState:
     vehicles: list[VehicleInfo] = []
     for row in rows:
         wialon_id = row["wialon_id"]
-        pos_lon = float(row["pos_x"] or 0)
-        pos_lat = float(row["pos_y"] or 0)
+        raw_lon = float(row["pos_x"] or 0)
+        raw_lat = float(row["pos_y"] or 0)
+
+        # Apply Wialon → WGS84 offset correction (check is not None, not truthiness — 0.0 is valid)
+        pos_lon = raw_lon + WIALON_LON_OFFSET if raw_lon is not None else raw_lon
+        pos_lat = raw_lat + WIALON_LAT_OFFSET if raw_lat is not None else raw_lat
 
         # Snap to graph node
         start_node = None
@@ -179,14 +194,17 @@ async def _load_fleet_from_db(db: AsyncSession) -> FleetState:
                 and graph_bbox[1] <= pos_lat <= graph_bbox[3]
             ):
                 start_node = graph_svc.snap_to_node(pos_lon, pos_lat)
+                logger.debug(
+                    "Vehicle %s snapped: raw=(%.4f, %.4f) → corrected=(%.4f, %.4f) → node %s",
+                    wialon_id, raw_lon, raw_lat, pos_lon, pos_lat, start_node,
+                )
             else:
-                # Vehicle coordinates are outside road graph bounds (mock data offset).
-                # Distribute vehicles deterministically across graph nodes.
+                # Corrected coordinates still outside graph bbox — deterministic fallback.
                 start_node = graph_svc.node_at_index(int(wialon_id) * 7919)
-                logger.info(
-                    "Vehicle %s coords (%.4f, %.4f) outside graph bbox — "
-                    "assigned to graph node %s (deterministic fallback)",
-                    wialon_id, pos_lon, pos_lat, start_node,
+                logger.warning(
+                    "Vehicle %s corrected coords (%.4f, %.4f) still outside graph bbox %s — "
+                    "deterministic fallback → node %s",
+                    wialon_id, pos_lon, pos_lat, graph_bbox, start_node,
                 )
 
         if start_node is None:
@@ -200,7 +218,6 @@ async def _load_fleet_from_db(db: AsyncSession) -> FleetState:
 
         free_at = busy_map.get(wialon_id, 0.0)
 
-        from app.core.compatibility import get_vehicle_skills
         vehicle_name = row["nm"] or f"Vehicle {wialon_id}"
         vehicles.append(
             VehicleInfo(
@@ -227,7 +244,6 @@ async def _load_busy_map(db: AsyncSession) -> dict[int, float]:
     Falls back to empty dict if the assignment table is unavailable.
     """
     from sqlalchemy import text
-    from datetime import datetime, timezone
 
     try:
         # Fetch orders with assigned wialon_id and planned duration that end in the future
@@ -270,12 +286,7 @@ async def _load_busy_map(db: AsyncSession) -> dict[int, float]:
 
         # Assume day shift starts at 08:00
         task_start = work_date.replace(hour=8, minute=0, second=0, microsecond=0)
-        task_end = task_start.replace(hour=task_start.hour) if False else (
-            task_start.replace(
-                hour=min(task_start.hour + int(planned_hours), 23),
-                minute=int((planned_hours % 1) * 60),
-            )
-        )
+        task_end = task_start + timedelta(minutes=int(planned_hours * 60))
 
         # free_at_minutes = minutes from now until task ends (0 if already finished)
         delta_seconds = (task_end - now_utc).total_seconds()

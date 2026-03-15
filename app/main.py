@@ -3,8 +3,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.core.graph_service import init_graph_service, get_graph_service
 from app.db import AsyncSessionLocal
@@ -23,6 +24,8 @@ async def lifespan(app: FastAPI):
 
     # ── Load road graph (with retry) ──────────────────────────────────
     logger.info("🚀 Service starting — loading road graph …")
+    svc = None
+    last_exc: Exception | None = None
     for attempt in range(1, 4):
         try:
             async with AsyncSessionLocal() as session:
@@ -34,11 +37,14 @@ async def lifespan(app: FastAPI):
             )
             break
         except Exception as exc:
+            last_exc = exc
             logger.error(
                 "❌ Failed to load graph (attempt %d/3): %s", attempt, exc, exc_info=True
             )
             if attempt < 3:
                 await asyncio.sleep(5 * attempt)  # wait 5s, 10s before retrying
+    if svc is None:
+        raise RuntimeError(f"Road graph could not be loaded after 3 attempts: {last_exc}")
 
     # ── Pre-load fleet state ───────────────────────────────────────
     try:
@@ -67,6 +73,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# ── Prometheus middleware (must be added before CORS) ───────────────
+from app.core.metrics import PrometheusMiddleware  # noqa: E402
+app.add_middleware(PrometheusMiddleware)
 
 # ── CORS ───────────────────────────────────────────────────────────
 app.add_middleware(
@@ -116,6 +126,14 @@ async def my_ip():
             return r.json()
     except Exception as exc:
         return {"error": str(exc)}
+
+
+@app.get("/metrics", tags=["system"], include_in_schema=False)
+async def metrics():
+    """Prometheus metrics endpoint."""
+    from app.core.metrics import update_kpi_gauges
+    update_kpi_gauges()
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/", tags=["system"], include_in_schema=False)
