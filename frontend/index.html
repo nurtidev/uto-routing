@@ -435,6 +435,16 @@
       </div>
     </div>
 
+    <!-- Demo Scenarios -->
+    <div id="demo-bar" style="padding:8px 16px 4px;">
+      <div style="font-size:10px;color:#8892b0;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Демо-сценарии</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn btn-secondary" style="margin:0;padding:5px 8px;font-size:11px;width:auto;" onclick="runDemo(1)" title="Сценарий 1: Срочная заявка high-priority">⚡ Срочная</button>
+        <button class="btn btn-secondary" style="margin:0;padding:5px 8px;font-size:11px;width:auto;" onclick="runDemo(2)" title="Сценарий 2: Сравнение baseline vs оптимизированный">📊 Сравнение</button>
+        <button class="btn btn-secondary" style="margin:0;padding:5px 8px;font-size:11px;width:auto;" onclick="runDemo(3)" title="Сценарий 3: 3 заявки в одном районе — объединение">🔀 Мульти-стоп</button>
+      </div>
+    </div>
+
     <!-- Tabs -->
     <div class="tabs">
       <div class="tab active" onclick="switchTab('rec')">Рекомендации</div>
@@ -1232,6 +1242,73 @@
       // Load map data, orders and KPI stats in parallel
       await Promise.all([loadVehicles(), loadWells(), loadOrders(), loadStats()]);
     });
+
+    // ─── Demo scenarios ─────────────────────────────────────────────────────────
+    const DEMO_SCENARIOS = {
+      1: {
+        // Сценарий 1: Срочная high-priority заявка
+        tab: 'rec',
+        fill: () => {
+          // Use first available order from cache if loaded, else hardcoded
+          const ids = Object.keys(_ordersCache);
+          const highPriority = ids.find(id => _ordersCache[id]?.priority === 'high');
+          const taskId = highPriority || ids[0] || 'G000002';
+          const order = _ordersCache[taskId];
+          document.getElementById('rec-task-id').value = taskId;
+          document.getElementById('rec-priority').value = 'high';
+          document.getElementById('rec-uwi').value = order?.destination_uwi || 'JET_4416';
+          document.getElementById('rec-start').value = '2025-07-30T08:00';
+          document.getElementById('rec-duration').value = '4';
+          document.getElementById('rec-task-type').value = order?.task_type || '';
+          document.getElementById('rec-order-select').value = taskId;
+        },
+        action: getRecommendations
+      },
+      2: {
+        // Сценарий 2: medium-priority, сравнение baseline vs оптимизированный
+        tab: 'rec',
+        fill: () => {
+          const ids = Object.keys(_ordersCache);
+          const medPriority = ids.find(id => _ordersCache[id]?.priority === 'medium');
+          const taskId = medPriority || ids[1] || 'G000033';
+          const order = _ordersCache[taskId];
+          document.getElementById('rec-task-id').value = taskId;
+          document.getElementById('rec-priority').value = 'medium';
+          document.getElementById('rec-uwi').value = order?.destination_uwi || 'JET_4555';
+          document.getElementById('rec-start').value = '2025-07-30T08:00';
+          document.getElementById('rec-duration').value = '6';
+          document.getElementById('rec-task-type').value = order?.task_type || '';
+          document.getElementById('rec-order-select').value = taskId;
+        },
+        action: getRecommendations
+      },
+      3: {
+        // Сценарий 3: 3 заявки в одном районе → multitask объединение
+        tab: 'multi',
+        fill: () => {
+          const ids = Object.keys(_ordersCache);
+          const selected = ids.slice(0, 3).join(', ') || 'G000004, G000005, G000006';
+          document.getElementById('multi-ids').value = selected;
+          document.getElementById('multi-max-time').value = '480';
+          document.getElementById('multi-detour').value = '1.3';
+        },
+        action: evalMultitask
+      },
+    };
+
+    async function runDemo(num) {
+      const scenario = DEMO_SCENARIOS[num];
+      if (!scenario) return;
+      switchTab(scenario.tab);
+      // Wait a tick for tab to render, then fill and run
+      await new Promise(r => setTimeout(r, 50));
+      // Ensure orders are loaded for demo scenarios 1 and 2
+      if (Object.keys(_ordersCache).length === 0) {
+        await loadOrders();
+      }
+      scenario.fill();
+      await scenario.action();
+    }
   </script>
 </body>
 

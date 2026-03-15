@@ -162,6 +162,22 @@ curl -X POST https://uto-routing-production.up.railway.app/api/multitask \
   }'
 ```
 
+Пример ответа (заявки рядом — выгодно объединить):
+```json
+{
+  "groups": [["G000004", "G000006"], ["G000005"]],
+  "strategy_summary": "mixed",
+  "total_distance_km": 18.4,
+  "total_time_minutes": 138.0,
+  "baseline_distance_km": 31.2,
+  "baseline_time_minutes": 234.0,
+  "savings_percent": 41.0,
+  "reason": "Заявки G000004, G000006 объединены в один выезд — близкое расположение точек назначения. Заявки G000005 обслуживаются отдельно — территориально удалены или нарушают ограничение крюка. Итоговая экономия: 12.8 км."
+}
+```
+
+Поля `baseline_distance_km` / `baseline_time_minutes` — суммарные показатели при раздельном обслуживании. `savings_percent` — процент экономии предложенной группировки.
+
 ---
 
 ### 6. Пакетное планирование смены (VRPTW)
@@ -189,6 +205,39 @@ curl -X POST https://uto-routing-production.up.railway.app/api/fleet/refresh
 ```json
 {"vehicle_count": 116, "message": "Fleet reloaded: 116 vehicles available."}
 ```
+
+---
+
+## Демонстрация 3 сценариев (ТЗ п. 10.2)
+
+### Сценарий 1 — Срочная заявка (high priority)
+
+```bash
+curl -X POST https://uto-routing-production.up.railway.app/api/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{"task_id":"G000002","priority":"high","destination_uwi":"JET_4416","planned_start":"2025-07-30T08:00:00","duration_hours":4}'
+```
+
+Система выбирает машину с SLA-штрафом 0 (ETA < 2ч), показывает маршрут по графу. Baseline (ближайшая свободная) — для сравнения.
+
+### Сценарий 2 — Сравнение baseline vs оптимизированный (medium priority)
+
+| Подход | ETA, мин | Расстояние, км | SLA |
+|---|---|---|---|
+| Baseline (nearest_free) | — | ближайшая | не учитывает занятость |
+| ИС УТО | учтена занятость | по графу дорог | штраф при превышении +5ч |
+
+Разница видна в поле `baseline` в ответе `/api/recommendations` — топ-1 нашего алгоритма часто не совпадает с baseline-машиной из-за учёта SLA и занятости.
+
+### Сценарий 3 — Многозадачность: 3 заявки в одном районе
+
+```bash
+curl -X POST https://uto-routing-production.up.railway.app/api/multitask \
+  -H "Content-Type: application/json" \
+  -d '{"task_ids":["G000004","G000005","G000006"],"constraints":{"max_total_time_minutes":480,"max_detour_ratio":1.3}}'
+```
+
+Если заявки территориально близки — система возвращает `strategy_summary: "single_unit"` или `"mixed"` с `savings_percent > 0`. Если разнесены — `"separate"`.
 
 ---
 
