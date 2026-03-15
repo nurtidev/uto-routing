@@ -70,6 +70,37 @@ async def fleet_refresh(db: AsyncSession = Depends(get_db)) -> FleetRefreshRespo
     )
 
 
+@router.post(
+    "/graph/reload",
+    summary="Force-reload road graph from DB",
+    description=(
+        "Re-loads the road graph (road_nodes + road_edges) from the database "
+        "and reinitialises the fleet state. Use after service cold-start if the "
+        "graph failed to load automatically."
+    ),
+)
+async def graph_reload(db: AsyncSession = Depends(get_db)):
+    from app.core.graph_loader import reset_graph
+    from app.core.graph_service import init_graph_service
+    from app.core.fleet_state import get_fleet_state
+
+    now = datetime.now(tz=timezone.utc).isoformat()
+    try:
+        reset_graph()
+        svc = await init_graph_service(db)
+        fleet = await get_fleet_state(db, force_reload=True)
+        return {
+            "status": "ok",
+            "graph_nodes": svc.node_count,
+            "graph_edges": svc.edge_count,
+            "vehicle_count": fleet.vehicle_count,
+            "reloaded_at": now,
+        }
+    except Exception as exc:
+        logger.error("graph_reload failed: %s", exc, exc_info=True)
+        return {"status": "error", "detail": str(exc), "reloaded_at": now}
+
+
 @router.get(
     "/stats",
     response_model=StatsResponse,

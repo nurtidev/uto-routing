@@ -19,18 +19,26 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: pre-load road graph and fleet state into memory."""
-    # ── Load road graph ────────────────────────────────────────────
+    import asyncio
+
+    # ── Load road graph (with retry) ──────────────────────────────────
     logger.info("🚀 Service starting — loading road graph …")
-    try:
-        async with AsyncSessionLocal() as session:
-            svc = await init_graph_service(session)
-        logger.info(
-            "✅ Road graph loaded: %d nodes, %d edges",
-            svc.node_count,
-            svc.edge_count,
-        )
-    except Exception as exc:
-        logger.error("❌ Failed to load graph: %s", exc, exc_info=True)
+    for attempt in range(1, 4):
+        try:
+            async with AsyncSessionLocal() as session:
+                svc = await init_graph_service(session)
+            logger.info(
+                "✅ Road graph loaded: %d nodes, %d edges",
+                svc.node_count,
+                svc.edge_count,
+            )
+            break
+        except Exception as exc:
+            logger.error(
+                "❌ Failed to load graph (attempt %d/3): %s", attempt, exc, exc_info=True
+            )
+            if attempt < 3:
+                await asyncio.sleep(5 * attempt)  # wait 5s, 10s before retrying
 
     # ── Pre-load fleet state ───────────────────────────────────────
     try:
